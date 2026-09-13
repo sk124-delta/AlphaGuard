@@ -1,0 +1,6 @@
+streamlit
+supabase
+apscheduler
+opencv-python-headless
+numpy
+stripe
