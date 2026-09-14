@@ -4,3 +4,4 @@ apscheduler
 opencv-python-headless
 numpy
 stripe
+python-dotenv
