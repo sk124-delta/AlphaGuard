@@ -1,4 +1,5 @@
 streamlit
+extra-streamlit-components
 supabase
 apscheduler
 opencv-python-headless

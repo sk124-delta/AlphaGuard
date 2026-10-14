@@ -1,6 +1,8 @@
 """Scheduled ValueSERP scans for active AlphaGuard protected assets."""
 
 import logging
+from datetime import datetime, timezone
+from typing import Any
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -8,12 +10,16 @@ from .db import (
     DatabaseError,
     get_active_protected_assets,
     get_detected_match_links,
+    get_user_profile,
     get_user_tier,
     get_user_match_count,
+    prepare_due_takedown_escalations,
     save_detected_match,
+    save_takedown_notice,
     update_user_match_count,
 )
 from .scanner import ScannerError, scan_image_valueserp
+from .url_utils import filter_whitelisted_matches
 
 
 LOGGER = logging.getLogger(__name__)
@@ -24,7 +30,24 @@ def run_scan_cycle() -> int:
     """Scan every active asset once and return the number of new matches saved."""
     new_matches_by_user: dict[str, int] = {}
 
-    for asset in get_active_protected_assets():
+    assets = get_active_protected_assets()
+
+    def has_priority(asset: dict[str, Any]) -> bool:
+        try:
+            return get_user_tier(str(asset["user_id"])) == "Enterprise"
+        except DatabaseError:
+            LOGGER.exception("Could not determine scan priority for asset %s", asset.get("id"))
+            return False
+
+    assets.sort(key=has_priority, reverse=True)
+    try:
+        escalated_count = prepare_due_takedown_escalations()
+        if escalated_count:
+            LOGGER.info("Prepared drafts for %s overdue takedown notice(s)", escalated_count)
+    except DatabaseError:
+        LOGGER.exception("Could not prepare overdue takedown escalation drafts")
+
+    for asset in assets:
         asset_id = int(asset["id"])
         user_id = str(asset["user_id"])
         image_url = str(asset.get("image_url") or "").strip()
@@ -32,9 +55,23 @@ def run_scan_cycle() -> int:
             continue
 
         try:
-            if get_user_tier(user_id) != "Pro":
+            tier = get_user_tier(user_id)
+            profile = get_user_profile(user_id)
+            trial_end = (profile or {}).get("trial_end_date")
+            trial_active = False
+            if trial_end:
+                trial_end_date = datetime.fromisoformat(
+                    str(trial_end).replace("Z", "+00:00")
+                )
+                if trial_end_date.tzinfo is None:
+                    trial_end_date = trial_end_date.replace(tzinfo=timezone.utc)
+                trial_active = datetime.now(timezone.utc) <= trial_end_date
+            if tier not in {"Standard", "Enterprise", "Pro", "Pro (Full Auto)"} and not trial_active:
                 continue
-            results = scan_image_valueserp(image_url)
+            results = filter_whitelisted_matches(
+                scan_image_valueserp(image_url),
+                str((profile or {}).get("whitelisted_partners") or ""),
+            )
             existing_links = get_detected_match_links(asset_id, (result.link for result in results))
             seen_links = set(existing_links)
             new_results = []
@@ -44,6 +81,10 @@ def run_scan_cycle() -> int:
                     new_results.append(result)
             for result in new_results:
                 save_detected_match(user_id, asset_id, image_url, result)
+                if profile and profile.get("id"):
+                    save_takedown_notice(
+                        str(profile["id"]), result.link, result.thumbnail or ""
+                    )
             if new_results:
                 new_matches_by_user[user_id] = new_matches_by_user.get(user_id, 0) + len(new_results)
         except (ScannerError, DatabaseError):

@@ -63,20 +63,248 @@ create table if not exists public.user_match_counts (
 );
 
 create table if not exists public.user_profiles (
-    user_id text primary key,
-    tier text not null default 'Free' check (tier in ('Free', 'Pro')),
+    id uuid primary key references auth.users(id) on delete cascade,
+    email text unique not null,
+    shop_name text,
+    owner_name text,
+    owner_address text,
+    mailing_address text,
+    business_email text,
+    website_url text,
+    primary_domain text,
+    primary_market text,
+    tier_plan text default 'Standard Trial',
+    selected_plan text not null default 'Standard' check (selected_plan in ('Standard', 'Enterprise')),
+    whitelisted_partners text,
+    tier text not null default 'Trial' check (tier in ('Trial', 'Free', 'Standard', 'Enterprise', 'Pro', 'Pro (Full Auto)')),
     settings jsonb not null default '{}'::jsonb,
+    trial_start_date timestamptz default now(),
+    trial_end_date timestamptz default (now() + interval '14 days'),
+    created_at timestamptz default now(),
     stripe_customer_id text unique,
     stripe_subscription_id text,
     updated_at timestamptz not null default timezone('utc', now())
 );
 
+alter table public.user_profiles add column if not exists id uuid;
+alter table public.user_profiles add column if not exists email text;
+alter table public.user_profiles add column if not exists shop_name text;
+alter table public.user_profiles add column if not exists owner_name text;
+alter table public.user_profiles add column if not exists owner_address text;
+alter table public.user_profiles add column if not exists mailing_address text;
+alter table public.user_profiles add column if not exists business_email text;
+alter table public.user_profiles add column if not exists website_url text;
+alter table public.user_profiles add column if not exists primary_domain text;
+alter table public.user_profiles add column if not exists primary_market text;
+alter table public.user_profiles add column if not exists tier_plan text default 'Standard Trial';
+alter table public.user_profiles add column if not exists selected_plan text not null default 'Standard';
+alter table public.user_profiles add column if not exists whitelisted_partners text;
+alter table public.user_profiles add column if not exists tier text not null default 'Trial';
+alter table public.user_profiles add column if not exists settings jsonb not null default '{}'::jsonb;
+alter table public.user_profiles add column if not exists trial_start_date timestamptz default now();
+alter table public.user_profiles add column if not exists trial_end_date timestamptz default (now() + interval '14 days');
+alter table public.user_profiles add column if not exists created_at timestamptz default now();
+alter table public.user_profiles add column if not exists stripe_customer_id text;
+alter table public.user_profiles add column if not exists stripe_subscription_id text;
+alter table public.user_profiles add column if not exists updated_at timestamptz not null default timezone('utc', now());
+
+do $$
+declare
+    unmatched_profiles bigint;
+    profile_pk record;
+    profile_fk record;
+begin
+    if exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'user_profiles'
+          and column_name = 'user_id'
+    ) then
+        update public.user_profiles as profile
+        set id = auth_user.id,
+            email = lower(auth_user.email)
+        from auth.users as auth_user
+        where (profile.id is null or profile.email is null)
+          and (
+              lower(profile.email) = lower(auth_user.email)
+              or lower(profile.user_id) = lower(auth_user.email)
+              or profile.id = auth_user.id
+          );
+
+        select count(*) into unmatched_profiles
+        from public.user_profiles
+        where id is null or email is null;
+        if unmatched_profiles > 0 then
+            raise exception
+                'Cannot migrate % user_profiles row(s): match each legacy user_id/email to an auth.users account, then rerun this schema.',
+                unmatched_profiles;
+        end if;
+
+        for profile_fk in
+            select constraint_row.conname
+            from pg_constraint as constraint_row
+            where constraint_row.contype = 'f'
+              and constraint_row.conrelid = to_regclass('public.takedown_notices')
+              and constraint_row.confrelid = 'public.user_profiles'::regclass
+        loop
+            execute format(
+                'alter table public.takedown_notices drop constraint %I',
+                profile_fk.conname
+            );
+        end loop;
+
+        for profile_pk in
+            select constraint_row.conname
+            from pg_constraint as constraint_row
+            where constraint_row.contype = 'p'
+              and constraint_row.conrelid = 'public.user_profiles'::regclass
+        loop
+            execute format(
+                'alter table public.user_profiles drop constraint %I',
+                profile_pk.conname
+            );
+        end loop;
+
+        alter table public.user_profiles alter column id set not null;
+        alter table public.user_profiles drop column user_id;
+        alter table public.user_profiles
+            add constraint user_profiles_pkey primary key (id);
+    end if;
+end
+$$;
+
+do $$
+begin
+    if not exists (
+        select 1 from pg_constraint
+        where conname in ('user_profiles_id_auth_users_fkey', 'user_profiles_id_fkey')
+          and conrelid = 'public.user_profiles'::regclass
+    ) then
+        alter table public.user_profiles
+            add constraint user_profiles_id_auth_users_fkey
+            foreign key (id) references auth.users(id) on delete cascade;
+    end if;
+end
+$$;
+
+alter table public.user_profiles alter column email set not null;
+alter table public.user_profiles alter column tier set default 'Trial';
+alter table public.user_profiles drop constraint if exists user_profiles_tier_check;
+alter table public.user_profiles add constraint user_profiles_tier_check
+    check (tier in ('Trial', 'Free', 'Standard', 'Enterprise', 'Pro', 'Pro (Full Auto)'));
+alter table public.user_profiles drop constraint if exists user_profiles_selected_plan_check;
+alter table public.user_profiles add constraint user_profiles_selected_plan_check
+    check (selected_plan in ('Standard', 'Enterprise'));
+
+update public.user_profiles
+set mailing_address = owner_address
+where mailing_address is null and owner_address is not null;
+
+update public.user_profiles
+set primary_domain = lower(regexp_replace(
+    substring(website_url from '^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:?#]+)'),
+    '^www\.',
+    ''
+))
+where primary_domain is null and website_url is not null;
+
+create table if not exists public.takedown_notices (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid references public.user_profiles(id) on delete cascade,
+    target_url text not null,
+    infringing_image_url text,
+    status text default 'Pending Authorization',
+    generated_notice text,
+    dispatched_at timestamptz,
+    notice_sent_at timestamptz,
+    escalation_status text default 'Standard Notice Issued',
+    days_unresolved integer default 0,
+    escalation_at timestamptz,
+    escalation_drafts jsonb not null default '{}'::jsonb,
+    created_at timestamptz default now()
+);
+
 alter table public.encoded_images add column if not exists image_url text not null default '';
 alter table public.encoded_images add column if not exists is_active boolean not null default false;
-alter table public.user_profiles add column if not exists settings jsonb not null default '{}'::jsonb;
+alter table public.takedown_notices add column if not exists generated_notice text;
+alter table public.takedown_notices add column if not exists dispatched_at timestamptz;
+alter table public.takedown_notices add column if not exists notice_sent_at timestamptz;
+alter table public.takedown_notices add column if not exists escalation_status text default 'Standard Notice Issued';
+alter table public.takedown_notices add column if not exists days_unresolved integer default 0;
+alter table public.takedown_notices add column if not exists escalation_at timestamptz;
+alter table public.takedown_notices add column if not exists escalation_drafts jsonb not null default '{}'::jsonb;
+
+do $$
+declare
+    unmatched_notices bigint;
+    notice_fk record;
+begin
+    if exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'takedown_notices'
+          and column_name = 'user_id'
+          and data_type = 'text'
+    ) then
+        alter table public.takedown_notices add column if not exists auth_user_id uuid;
+
+        update public.takedown_notices as notice
+        set auth_user_id = profile.id
+        from public.user_profiles as profile
+        where notice.auth_user_id is null
+          and (
+              profile.email = notice.user_id
+              or profile.id::text = notice.user_id
+          );
+
+        select count(*) into unmatched_notices
+        from public.takedown_notices
+        where auth_user_id is null;
+        if unmatched_notices > 0 then
+            raise exception
+                'Cannot migrate % takedown notice row(s): link their legacy user_id to a migrated user profile, then rerun this schema.',
+                unmatched_notices;
+        end if;
+
+        for notice_fk in
+            select constraint_row.conname
+            from pg_constraint as constraint_row
+            where constraint_row.contype = 'f'
+              and constraint_row.conrelid = 'public.takedown_notices'::regclass
+        loop
+            execute format(
+                'alter table public.takedown_notices drop constraint %I',
+                notice_fk.conname
+            );
+        end loop;
+
+        alter table public.takedown_notices drop column user_id;
+        alter table public.takedown_notices rename column auth_user_id to user_id;
+    end if;
+
+    if not exists (
+        select 1 from pg_constraint
+        where conname = 'takedown_notices_user_id_fkey'
+          and conrelid = 'public.takedown_notices'::regclass
+    ) then
+        alter table public.takedown_notices
+            add constraint takedown_notices_user_id_fkey
+            foreign key (user_id) references public.user_profiles(id) on delete cascade;
+    end if;
+end
+$$;
 
 create index if not exists encoded_images_user_id_idx on public.encoded_images (user_id, created_at desc);
 create index if not exists scan_results_user_id_idx on public.scan_results (user_id, created_at desc);
 create index if not exists dmca_notices_user_id_idx on public.dmca_notices (user_id, created_at desc);
 create index if not exists detected_matches_user_id_idx on public.detected_matches (user_id, detected_at desc);
 create index if not exists user_profiles_tier_idx on public.user_profiles (tier);
+create unique index if not exists user_profiles_email_key on public.user_profiles (email);
+create unique index if not exists user_profiles_website_url_key
+    on public.user_profiles (website_url);
+create unique index if not exists user_profiles_primary_domain_key
+    on public.user_profiles (primary_domain)
+    where primary_domain is not null and primary_domain <> '';
+create index if not exists takedown_notices_user_id_idx on public.takedown_notices (user_id, created_at desc);

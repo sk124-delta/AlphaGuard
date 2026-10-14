@@ -22,9 +22,19 @@ def _handle_checkout_completed(session: Any) -> None:
     user_id = _metadata_value(metadata, "user_id") or _metadata_value(metadata, "user_email")
     if not user_id:
         raise HTTPException(status_code=400, detail="Checkout session is missing user metadata.")
+    requested_tier = _metadata_value(metadata, "tier") or _metadata_value(metadata, "plan") or "Pro"
+    tier_by_name = {
+        "standard": "Standard",
+        "enterprise": "Enterprise",
+        "pro": "Pro",
+        "pro (full auto)": "Pro (Full Auto)",
+    }
+    tier = tier_by_name.get(requested_tier.lower())
+    if tier is None:
+        raise HTTPException(status_code=400, detail="Checkout session has an unsupported AlphaGuard plan.")
     update_user_subscription(
         user_id,
-        "Pro",
+        tier,
         stripe_customer_id=str(session.get("customer")) if session.get("customer") else None,
         stripe_subscription_id=str(session.get("subscription")) if session.get("subscription") else None,
     )
