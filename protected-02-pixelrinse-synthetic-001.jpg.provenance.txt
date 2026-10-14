@@ -1,0 +1,6 @@
+ALPHAGUARD CERTIFICATE OF PROVENANCE
+File: protected-01-pixelrinse-synthetic-001.jpg
+SHA-256: 86b7f3980d227b7018532dadc89be5c29f179377b8f3aac90dfeeda6de707ea0
+Owner email: [Redacted]
+Timestamp (UTC): 2026-09-17
+Verification: The SHA-256 hash identifies the exact protected file produced by AlphaGuard.

@@ -1,0 +1,9 @@
+mkdir alphaguard-suite
+cd alphaguard-suite
+code .python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+# source venv/bin/activate
+
+pip install fastapi uvicorn jinja2 pydantic
