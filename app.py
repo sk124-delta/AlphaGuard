@@ -54,10 +54,16 @@ from src.alphaguard.db import (
 )
 from src.alphaguard.dmca import generate_notice
 from src.alphaguard.models import NoticeData
-from src.alphaguard.scanner import ScannerError, scan_image
+from src.alphaguard.scanner import (
+    ScannerError,
+    image_search_provider_name,
+    scan_image,
+    scan_product_footprint,
+)
 from src.alphaguard.url_utils import (
     domain_is_whitelisted as _domain_is_whitelisted,
     filter_whitelisted_matches,
+    is_http_url,
 )
 from src.alphaguard.stego import (
     SteganographyError,
@@ -1092,17 +1098,52 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
         return
     
     image_url = st.text_input("Image URL", placeholder="https://example.com/image.jpg")
-    provider_name = "Google Lens"
+    product_title = st.text_input("Product title (optional)")
     
     if st.button("Run Infringement Scan", type="primary", use_container_width=True):
-        if not image_url.strip():
-            st.warning("Please enter a valid image URL.")
+        if not image_url.strip() and not product_title.strip():
+            st.warning("Enter an image URL or product title to run a scan.")
+        elif image_url.strip() and not is_http_url(image_url):
+            st.warning("Enter a valid image URL beginning with https:// or http://.")
         else:
             with st.spinner("Scanning indexed web listings for unauthorized matches..."):
                 try:
-                    raw_results = scan_image(image_url)
+                    raw_results = []
+                    providers = []
+                    if image_url.strip():
+                        raw_results.extend(scan_image(image_url))
+                        providers.append(image_search_provider_name())
+                    if product_title.strip():
+                        own_domain = str(
+                            profile.get("primary_domain")
+                            or profile.get("website_url")
+                            or ""
+                        )
+                        raw_results.extend(
+                            scan_product_footprint(product_title, own_domain)
+                        )
+                        providers.append("DuckDuckGo product-title search")
+                    provider_name = " + ".join(providers)
+                    unique_results = {}
+                    for result in raw_results:
+                        if result.link:
+                            unique_results.setdefault(result.link, result)
+                    raw_results = list(unique_results.values())
+                    for position, result in enumerate(raw_results, start=1):
+                        result.position = position
                     whitelist = str(profile.get("whitelisted_partners") or "")
                     results = filter_whitelisted_matches(raw_results, whitelist)
+                    own_domain = str(
+                        profile.get("primary_domain")
+                        or profile.get("website_url")
+                        or ""
+                    )
+                    if own_domain:
+                        results = [
+                            result
+                            for result in results
+                            if not _domain_is_whitelisted(result.link, own_domain)
+                        ]
                     excluded_count = len(raw_results) - len(results)
                     if excluded_count:
                         st.info(
@@ -1119,19 +1160,14 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
                     trends[month] = trends.get(month, 0) + len(new_links)
                     save_scan_results(
                         st.session_state["user_email"],
-                        image_url,
+                        image_url.strip(),
                         provider_name,
                         results,
                     )
-                except ScannerError:
-                    st.error(
-                        "The scan could not be completed. Please try again shortly."
-                    )
-                except DatabaseError:
-                    st.warning(
-                        "The scan completed, but its results could not be saved. "
-                        "Please try again."
-                    )
+                except ScannerError as exc:
+                    st.error(f"The scan could not be completed: {exc}")
+                except DatabaseError as exc:
+                    st.warning(f"The scan completed, but its results could not be saved: {exc}")
                 else:
                     st.success(
                         "Scan completed successfully. Check the Pending Action queue "
