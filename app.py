@@ -1156,7 +1156,7 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
         if not _domain_is_whitelisted(
             result.link, str(profile.get("whitelisted_partners") or "")
         )
-    ]
+    ][:3]
     _takedown_action_queue(queue_results, profile, tier)
 
 
