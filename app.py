@@ -13,7 +13,6 @@ from zipfile import BadZipFile, ZipFile
 import streamlit as st
 import streamlit.components.v1 as components
 import extra_streamlit_components as stx
-from dotenv import load_dotenv
 from PIL import Image
 
 try:
@@ -70,7 +69,6 @@ from src.alphaguard.stego import (
     to_png_bytes,
 )
 
-load_dotenv()
 init_db()
 st.set_page_config(page_title="AlphaGuard", page_icon="AG", layout="wide")
 st.markdown(
