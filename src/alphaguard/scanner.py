@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 from .models import ScanResult
 from .url_utils import domain_is_whitelisted
@@ -76,49 +77,68 @@ def image_search_provider_name() -> str:
     """Return the provider selected for interactive image searches."""
     if _serpapi_key():
         return "Google Lens"
-    return "DuckDuckGo Images keyword search"
+    return "Bing Visual Search"
 
 
-def keyless_visual_scan(image_url: str) -> list[ScanResult]:
-    """Search DuckDuckGo Images using the URL as keywords, not reverse matching."""
+def keyless_visual_scan(image_url: str, timeout: int = 10) -> list[ScanResult]:
+    """Find external pages surfaced by Bing's image-by-URL search."""
     if not image_url.strip():
         raise ScannerError("An image URL is required for an image search.")
+    endpoint = "https://www.bing.com/images/searchbyimage"
+    params = {"cbir": "sbi", "imgurl": image_url.strip()}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     try:
-        from duckduckgo_search import DDGS
-    except ImportError as exc:
-        raise ScannerError(
-            "The keyless image-search provider is not installed."
-        ) from exc
+        response = requests.get(
+            endpoint,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ScannerError(f"Bing image search failed: {exc}") from exc
 
-    try:
-        with DDGS() as ddgs:
-            query_results = ddgs.images(keywords=image_url, max_results=5)
-            results = []
-            for item in query_results:
-                if not isinstance(item, dict):
-                    continue
-                link = str(item.get("url") or "")
-                if not link:
-                    continue
-                source = (
-                    item.get("domain")
-                    or item.get("source")
-                    or _domain(link)
-                )
-                results.append(
-                    ScanResult(
-                        title=str(item.get("title") or "Image search result"),
-                        link=link,
-                        source=str(source),
-                        displayed_link=link,
-                        thumbnail=str(item.get("image") or ""),
-                        position=len(results) + 1,
-                        raw=item,
-                    )
-                )
-            return results
-    except Exception as exc:
-        raise ScannerError("DuckDuckGo Images search failed.") from exc
+    soup = BeautifulSoup(response.text, "html.parser")
+    results = []
+    seen_links = set()
+    excluded_domains = ("bing.com", "microsoft.com", "msn.com")
+    for anchor in soup.find_all("a", href=True):
+        link = str(anchor["href"]).strip()
+        try:
+            parsed = urlparse(link)
+            hostname = (parsed.hostname or "").lower().removeprefix("www.").rstrip(".")
+        except ValueError:
+            continue
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or any(
+                hostname == domain or hostname.endswith(f".{domain}")
+                for domain in excluded_domains
+            )
+            or link in seen_links
+        ):
+            continue
+        seen_links.add(link)
+        results.append(
+            ScanResult(
+                title=anchor.get_text(" ", strip=True) or "Image search result",
+                link=link,
+                source=hostname,
+                displayed_link=link,
+                position=len(results) + 1,
+                raw={"href": link},
+            )
+        )
+        if len(results) == 5:
+            break
+    return results
 
 
 def scan_product_footprint(
@@ -165,7 +185,7 @@ def scan_product_footprint(
 
 
 def scan_image(image_url: str, timeout: int = 30) -> list[ScanResult]:
-    """Search with Google Lens, falling back to DuckDuckGo Images without a key."""
+    """Search with Google Lens, falling back to Bing image-by-URL search."""
     key = _serpapi_key()
     if not key:
         return keyless_visual_scan(image_url)

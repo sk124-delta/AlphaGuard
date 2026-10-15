@@ -1106,6 +1106,7 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
         elif image_url.strip() and not is_http_url(image_url):
             st.warning("Enter a valid image URL beginning with https:// or http://.")
         else:
+            st.session_state["scan_results"] = []
             with st.spinner("Scanning indexed web listings for unauthorized matches..."):
                 try:
                     raw_results = []
@@ -1190,7 +1191,7 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
         if not _domain_is_whitelisted(
             result.link, str(profile.get("whitelisted_partners") or "")
         )
-    ][:3]
+    ]
     _takedown_action_queue(queue_results, profile, tier)
 
 
