@@ -1,8 +1,9 @@
 """SerpApi Google Lens and ValueSERP integration with provider-independent results."""
 
 import os
+import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -12,6 +13,7 @@ from .url_utils import domain_is_whitelisted
 
 SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
 VALUESERP_ENDPOINT = "https://api.valueserp.com/search"
+DUCKDUCKGO_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
 
 
 class ScannerError(RuntimeError):
@@ -77,41 +79,52 @@ def image_search_provider_name() -> str:
     """Return the provider selected for interactive image searches."""
     if _serpapi_key():
         return "Google Lens"
-    return "Bing Visual Search"
+    return "DuckDuckGo filename keyword search"
 
 
 def keyless_visual_scan(image_url: str, timeout: int = 10) -> list[ScanResult]:
-    """Find external pages surfaced by Bing's image-by-URL search."""
+    """Search the web for the asset filename and return external listing candidates."""
     if not image_url.strip():
         raise ScannerError("An image URL is required for an image search.")
-    endpoint = "https://www.bing.com/images/searchbyimage"
-    params = {"cbir": "sbi", "imgurl": image_url.strip()}
+    parsed_image = urlparse(image_url.strip())
+    filename = unquote(parsed_image.path.rsplit("/", 1)[-1])
+    filename = re.sub(r"\.(?:jpe?g|png|webp|gif|avif)$", "", filename, flags=re.IGNORECASE)
+    filename = re.sub(r"(?:[_-]\d+x\d+|[_-]\d+-kw)+$", "", filename, flags=re.IGNORECASE)
+    keywords = re.sub(r"[-_]+", " ", filename).strip()
+    if not keywords:
+        raise ScannerError("The image URL must include a searchable filename.")
+
+    params = {"q": f'"{keywords}"'}
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
+            "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
     }
     try:
         response = requests.get(
-            endpoint,
+            DUCKDUCKGO_HTML_ENDPOINT,
             params=params,
             headers=headers,
             timeout=timeout,
         )
         response.raise_for_status()
     except requests.RequestException as exc:
-        raise ScannerError(f"Bing image search failed: {exc}") from exc
+        raise ScannerError(f"DuckDuckGo filename search failed: {exc}") from exc
 
     soup = BeautifulSoup(response.text, "html.parser")
     results = []
     seen_links = set()
-    excluded_domains = ("bing.com", "microsoft.com", "msn.com")
-    for anchor in soup.find_all("a", href=True):
+    original_host = (urlparse(image_url.strip()).hostname or "").lower().removeprefix("www.")
+    excluded_domains = ("duckduckgo.com", "google.com", "bing.com")
+    anchors = soup.select("a.result__a[href]") or soup.select("a.result__url[href]")
+    for anchor in anchors:
         link = str(anchor["href"]).strip()
         try:
             parsed = urlparse(link)
+            if parsed.hostname and parsed.hostname.lower().endswith("duckduckgo.com"):
+                link = parse_qs(parsed.query).get("uddg", [""])[0]
+                parsed = urlparse(link)
             hostname = (parsed.hostname or "").lower().removeprefix("www.").rstrip(".")
         except ValueError:
             continue
@@ -122,13 +135,20 @@ def keyless_visual_scan(image_url: str, timeout: int = 10) -> list[ScanResult]:
                 hostname == domain or hostname.endswith(f".{domain}")
                 for domain in excluded_domains
             )
+            or (
+                original_host
+                and (
+                    hostname == original_host
+                    or hostname.endswith(f".{original_host}")
+                )
+            )
             or link in seen_links
         ):
             continue
         seen_links.add(link)
         results.append(
             ScanResult(
-                title=anchor.get_text(" ", strip=True) or "Image search result",
+                title=anchor.get_text(" ", strip=True) or "Filename search result",
                 link=link,
                 source=hostname,
                 displayed_link=link,
@@ -185,10 +205,10 @@ def scan_product_footprint(
 
 
 def scan_image(image_url: str, timeout: int = 30) -> list[ScanResult]:
-    """Search with Google Lens, falling back to Bing image-by-URL search."""
+    """Search with Google Lens, falling back to filename-based web search."""
     key = _serpapi_key()
     if not key:
-        return keyless_visual_scan(image_url)
+        return keyless_visual_scan(image_url, timeout=timeout)
     if not image_url.strip():
         raise ScannerError("An image URL is required for a remote scan.")
     params = {"engine": "google_lens", "url": image_url, "api_key": key}

@@ -66,34 +66,35 @@ def test_scanner_normalizes_lens_results():
     assert results[0].position == 1
 
 
-def test_keyless_visual_scan_extracts_external_bing_results(monkeypatch):
+def test_keyless_visual_scan_searches_filename_and_extracts_external_results(monkeypatch):
     from src.alphaguard import scanner
 
     class FakeResponse:
         text = """
-            <a href="https://www.bing.com/images/search?q=example">Bing</a>
-            <a href="https://copy.example/product">Possible copy</a>
-            <a href="https://shop.microsoft.com/item">Microsoft</a>
+            <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fcopy.example%2Fproduct">
+                Possible copy
+            </a>
+            <a class="result__a" href="https://store.example/products/own-copy">Own site</a>
+            <a class="result__a" href="https://shop.google.com/item">Google</a>
             <a href="https://copy.example/product">Duplicate</a>
-            <a href="https://other.example/item"><b>Other match</b></a>
-            <a href="javascript:alert(1)">Invalid</a>
+            <a class="result__a" href="https://other.example/item"><b>Other match</b></a>
+            <a class="result__a" href="javascript:alert(1)">Invalid</a>
         """
 
         def raise_for_status(self):
             pass
 
     def fake_get(url, *, params, headers, timeout):
-        assert url == "https://www.bing.com/images/searchbyimage"
-        assert params == {
-            "cbir": "sbi",
-            "imgurl": "https://store.example/image.jpg",
-        }
-        assert headers["Accept-Language"] == "en-US,en;q=0.9"
+        assert url == "https://html.duckduckgo.com/html/"
+        assert params == {"q": '"product name"'}
+        assert headers["User-Agent"].startswith("Mozilla/5.0")
         assert timeout == 10
         return FakeResponse()
 
     monkeypatch.setattr(scanner.requests, "get", fake_get)
-    results = keyless_visual_scan("https://store.example/image.jpg")
+    results = keyless_visual_scan(
+        "https://store.example/product-name_2x2.jpg?version=3"
+    )
 
     assert [result.link for result in results] == [
         "https://copy.example/product",
@@ -110,10 +111,14 @@ def test_scan_image_uses_keyless_search_without_serpapi_key(monkeypatch):
 
     expected = [SimpleNamespace(link="https://copy.example/product")]
     monkeypatch.setattr(scanner, "_serpapi_key", lambda: None)
-    monkeypatch.setattr(scanner, "keyless_visual_scan", lambda image_url: expected)
+    monkeypatch.setattr(
+        scanner,
+        "keyless_visual_scan",
+        lambda image_url, timeout=10: expected,
+    )
 
     assert scan_image("https://store.example/image.jpg") == expected
-    assert image_search_provider_name() == "Bing Visual Search"
+    assert image_search_provider_name() == "DuckDuckGo filename keyword search"
 
 
 def test_keyless_visual_scan_surfaces_provider_failures(monkeypatch):
@@ -128,13 +133,13 @@ def test_keyless_visual_scan_surfaces_provider_failures(monkeypatch):
     try:
         keyless_visual_scan("https://store.example/image.jpg")
     except ScannerError as exc:
-        assert "Bing image search failed" in str(exc)
+        assert "DuckDuckGo filename search failed" in str(exc)
         assert isinstance(exc.__cause__, RequestException)
     else:
         raise AssertionError("provider failures should not be treated as no matches")
 
 
-def test_keyless_visual_scan_returns_no_fabricated_match_when_bing_has_no_links(monkeypatch):
+def test_keyless_visual_scan_returns_no_fabricated_match_when_search_has_no_links(monkeypatch):
     from src.alphaguard import scanner
 
     class FakeResponse:
