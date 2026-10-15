@@ -308,3 +308,42 @@ create unique index if not exists user_profiles_primary_domain_key
     on public.user_profiles (primary_domain)
     where primary_domain is not null and primary_domain <> '';
 create index if not exists takedown_notices_user_id_idx on public.takedown_notices (user_id, created_at desc);
+
+alter table public.takedown_notices enable row level security;
+alter table public.encoded_images enable row level security;
+
+drop policy if exists "Users view own notices" on public.takedown_notices;
+create policy "Users view own notices"
+    on public.takedown_notices
+    for select
+    to authenticated
+    using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users insert own notices" on public.takedown_notices;
+create policy "Users insert own notices"
+    on public.takedown_notices
+    for insert
+    to authenticated
+    with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users update own notices" on public.takedown_notices;
+create policy "Users update own notices"
+    on public.takedown_notices
+    for update
+    to authenticated
+    using ((select auth.uid()) = user_id)
+    with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users view own images" on public.encoded_images;
+create policy "Users view own images"
+    on public.encoded_images
+    for select
+    to authenticated
+    using ((select auth.uid())::text = user_id);
+
+drop policy if exists "Users insert own images" on public.encoded_images;
+create policy "Users insert own images"
+    on public.encoded_images
+    for insert
+    to authenticated
+    with check ((select auth.uid())::text = user_id);

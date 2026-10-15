@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import numpy as np
+import app as app_module
 from PIL import Image
 
 from app import (
@@ -12,6 +13,7 @@ from app import (
     _domain_is_whitelisted,
     _is_admin_email,
     _is_verified_admin,
+    _process_password_recovery_link,
     _trial_state,
 )
 from src.alphaguard.dmca import generate_notice
@@ -290,12 +292,32 @@ def test_password_reset_uses_configured_supabase_redirect(monkeypatch):
     client = FakeClient()
     monkeypatch.setattr(db, "get_client", lambda: client)
 
-    send_password_reset(" OWNER@EXAMPLE.COM ", "https://alphaguard.streamlit.app")
+    redirect_url = "https://alphaguard-fkre8tyjzbkpv2hjt5gvay.streamlit.app"
+    send_password_reset(" OWNER@EXAMPLE.COM ", redirect_url)
 
     assert client.auth.call == (
         "owner@example.com",
-        {"redirect_to": "https://alphaguard.streamlit.app"},
+        {"redirect_to": redirect_url},
     )
+
+
+def test_password_recovery_accepts_fragment_tokens(monkeypatch):
+    query_params = {
+        "type": "recovery",
+        "token": "access-token",
+        "refresh_token": "refresh-token",
+    }
+    session_state = {"password_reset_mode": False}
+    monkeypatch.setattr(app_module.components, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "query_params", query_params, raising=False)
+    monkeypatch.setattr(app_module.st, "session_state", session_state, raising=False)
+
+    _process_password_recovery_link()
+
+    assert session_state["password_reset_mode"] is True
+    assert session_state["reset_access_token"] == "access-token"
+    assert session_state["reset_refresh_token"] == "refresh-token"
+    assert query_params == {}
 
 
 def test_protected_image_conversion_supports_download_formats():
