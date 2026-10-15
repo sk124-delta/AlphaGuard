@@ -619,10 +619,12 @@ def get_user_match_count(user_id: str) -> int:
 
 
 def _scan_record(user_id: str, image_url: str, provider: str, results: Iterable[ScanResult]) -> dict[str, Any]:
+    normalized_results = list(results)
     return {
         "user_id": user_id,
         "image_url": image_url,
         "provider": provider,
+        "matches_found": len(normalized_results),
         "results": [
             {
                 "title": result.title,
@@ -633,7 +635,7 @@ def _scan_record(user_id: str, image_url: str, provider: str, results: Iterable[
                 "position": result.position,
                 "raw": result.raw,
             }
-            for result in results
+            for result in normalized_results
         ],
     }
 

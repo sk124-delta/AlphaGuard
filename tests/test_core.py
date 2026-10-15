@@ -19,6 +19,7 @@ from app import (
 )
 from src.alphaguard.dmca import generate_notice
 from src.alphaguard.db import (
+    _scan_record,
     delete_persistent_auth_session,
     get_persistent_auth_session,
     init_db,
@@ -64,6 +65,22 @@ def test_scanner_normalizes_lens_results():
     results = normalize_results({"visual_matches": [{"title": "Copy", "link": "https://www.example.com/a"}]})
     assert results[0].source == "example.com"
     assert results[0].position == 1
+
+
+def test_scan_record_persists_match_count_with_normalized_results():
+    results = normalize_results(
+        {
+            "visual_matches": [
+                {"title": "Copy A", "link": "https://copy.example/a"},
+                {"title": "Copy B", "link": "https://copy.example/b"},
+            ]
+        }
+    )
+
+    record = _scan_record("owner@example.com", "https://store.example/image.png", "Google Lens", iter(results))
+
+    assert record["matches_found"] == 2
+    assert len(record["results"]) == 2
 
 
 def test_keyless_visual_scan_searches_filename_and_extracts_external_results(monkeypatch):

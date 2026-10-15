@@ -23,6 +23,7 @@ create table if not exists public.scan_results (
     image_url text not null,
     provider text not null,
     results jsonb not null default '[]'::jsonb,
+    matches_found integer not null default 0,
     created_at timestamptz not null default timezone('utc', now())
 );
 
@@ -311,6 +312,29 @@ create index if not exists takedown_notices_user_id_idx on public.takedown_notic
 
 alter table public.takedown_notices enable row level security;
 alter table public.encoded_images enable row level security;
+alter table public.scan_results
+    add column if not exists matches_found integer not null default 0;
+alter table public.scan_results enable row level security;
+
+drop policy if exists "Allow public inserts" on public.scan_results;
+drop policy if exists "Allow public reads" on public.scan_results;
+drop policy if exists "Users view own scan results" on public.scan_results;
+create policy "Users view own scan results"
+    on public.scan_results
+    for select
+    to authenticated
+    using (
+        lower(coalesce((select auth.jwt() ->> 'email'), '')) = lower(user_id)
+    );
+
+drop policy if exists "Users insert own scan results" on public.scan_results;
+create policy "Users insert own scan results"
+    on public.scan_results
+    for insert
+    to authenticated
+    with check (
+        lower(coalesce((select auth.jwt() ->> 'email'), '')) = lower(user_id)
+    );
 
 drop policy if exists "Users view own notices" on public.takedown_notices;
 create policy "Users view own notices"
