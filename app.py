@@ -51,12 +51,11 @@ from src.alphaguard.db import (
     save_dmca_notice_log,
     save_encoded_image_metadata,
     save_scan_results,
-    save_valueserp_scan_results,
     init_db,
 )
 from src.alphaguard.dmca import generate_notice
 from src.alphaguard.models import NoticeData
-from src.alphaguard.scanner import ScannerError, scan_image, scan_image_valueserp
+from src.alphaguard.scanner import ScannerError, scan_image
 from src.alphaguard.url_utils import (
     domain_is_whitelisted as _domain_is_whitelisted,
     filter_whitelisted_matches,
@@ -1084,24 +1083,9 @@ def _admin_review_queue() -> None:
 def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
     st.subheader("OSINT Visual Radar")
     st.caption(
-        "Search for unauthorized copies of protected logos, product imagery, and other visual "
-        "media across indexed e-commerce listings and third-party sites."
+        "Search for unauthorized copies of protected logos, product imagery, and visual media."
     )
-    if can_scan:
-        if st.session_state.get("is_admin"):
-            st.success("⚡ Admin access active: global monitoring enabled.")
-        elif tier == "Enterprise":
-            st.success("⚡ Enterprise priority radar: daily scheduled scans.")
-        elif tier == "Pro (Full Auto)":
-            st.success("⚡ Pro Full Auto: authorized notice drafts are generated automatically.")
-        elif tier == "Pro":
-            st.success("⚡ Pro Access Active: Unlimited Image Scanning Enabled")
-        else:
-            st.success(
-                f"🛡️ Trial scanning active · "
-                f"{st.session_state.get('trial_days_remaining', 0)} day(s) remaining."
-            )
-    else:
+    if not can_scan:
         st.warning(
             "🔒 Radar scanning is available during the 14-day trial and on Standard "
             "($29–$99/mo) or Enterprise ($299–$599+/mo) plans."
@@ -1109,52 +1093,40 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
         render_subscription_tiers()
         return
     
-    # Provider selection
-    provider = st.radio(
-        "Search provider",
-        options=["SerpApi (Google Lens)", "ValueSERP (Reverse Image Search)"],
-        horizontal=True,
-    )
+    image_url = st.text_input("Image URL", placeholder="https://example.com/image.jpg")
+    provider_name = "Google Lens"
     
-    if provider == "SerpApi (Google Lens)":
-        st.write("Provide a publicly accessible image URL. SerpApi Google Lens returns visually similar pages and images.")
-        image_url = st.text_input("Image URL", placeholder="https://example.com/image.jpg")
-        provider_name = "Google Lens"
-        scan_func = scan_image
-    else:
-        st.write("Provide a publicly accessible image URL. ValueSERP performs reverse image search to find similar images across the web.")
-        image_url = st.text_input("Image URL", placeholder="https://example.com/image.jpg", key="valueserp_url")
-        provider_name = "ValueSERP"
-        scan_func = scan_image_valueserp
-    
-    if st.button("Run Infringement Scan", type="primary", disabled=not image_url, use_container_width=True):
-        with st.spinner(f"Searching for visual matches using {provider_name}..."):
-            try:
-                raw_results = scan_func(image_url)
-                whitelist = str(profile.get("whitelisted_partners") or "")
-                results = filter_whitelisted_matches(raw_results, whitelist)
-                excluded_count = len(raw_results) - len(results)
-                if excluded_count:
-                    st.info(
-                        f"Excluded {excluded_count} match(es) on whitelisted partner domains."
-                    )
-                st.session_state["scan_results"] = results
-                links = {result.link for result in results if result.link}
-                known_links = st.session_state.setdefault("detected_links", set())
-                new_links = links - known_links
-                known_links.update(links)
-                st.session_state["infringements_detected"] = st.session_state.get("infringements_detected", 0) + len(new_links)
-                month = _now().strftime("%Y-%m")
-                trends = st.session_state.setdefault("infringement_trends", {})
-                trends[month] = trends.get(month, 0) + len(new_links)
-                if provider_name == "ValueSERP":
-                    _save_activity(lambda: save_valueserp_scan_results(st.session_state["user_email"], image_url, results))
-                else:
+    if st.button("Run Infringement Scan", type="primary", use_container_width=True):
+        if not image_url.strip():
+            st.warning("Please enter a valid image URL.")
+        else:
+            with st.spinner("Scanning indexed web listings for unauthorized matches..."):
+                try:
+                    raw_results = scan_image(image_url)
+                    whitelist = str(profile.get("whitelisted_partners") or "")
+                    results = filter_whitelisted_matches(raw_results, whitelist)
+                    excluded_count = len(raw_results) - len(results)
+                    if excluded_count:
+                        st.info(
+                            f"Excluded {excluded_count} match(es) on whitelisted partner domains."
+                        )
+                    st.session_state["scan_results"] = results
+                    links = {result.link for result in results if result.link}
+                    known_links = st.session_state.setdefault("detected_links", set())
+                    new_links = links - known_links
+                    known_links.update(links)
+                    st.session_state["infringements_detected"] = st.session_state.get("infringements_detected", 0) + len(new_links)
+                    month = _now().strftime("%Y-%m")
+                    trends = st.session_state.setdefault("infringement_trends", {})
+                    trends[month] = trends.get(month, 0) + len(new_links)
                     _save_activity(lambda: save_scan_results(st.session_state["user_email"], image_url, provider_name, results))
-            except ScannerError as exc:
-                st.error(str(exc))
-            except DatabaseError as exc:
-                st.error(f"Could not prepare takedown actions: {exc}")
+                except ScannerError as exc:
+                    if str(exc) == "SERPAPI_KEY is not configured.":
+                        st.error("Scanner service is currently updating. Please try again shortly.")
+                    else:
+                        st.error(str(exc))
+                except DatabaseError as exc:
+                    st.error(f"Could not prepare takedown actions: {exc}")
     
     results = st.session_state.get("scan_results", [])
     if results:
