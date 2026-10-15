@@ -5,3 +5,11 @@ apscheduler
 opencv-python-headless
 numpy
 stripe
+streamlit
+supabase
+requests
+python-dotenv
+streamlit
+supabase
+requests
+duckduckgo-search

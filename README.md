@@ -3,7 +3,7 @@
 AlphaGuard is a small Streamlit workspace for content ownership records:
 
 - **Protect**: embed a UTF-8 ownership or provenance note in a PNG, JPG, or WebP image using RGB LSB steganography.
-- **Scan**: search a public image URL with SerpApi Google Lens or ValueSERP and review normalized visual matches.
+- **Scan**: search a public image URL with managed SerpApi Google Lens, or use DuckDuckGo Images as a keyless keyword-search fallback. The Scan page also searches the web for an optional product title and excludes the account's registered domain. DuckDuckGo image fallback searches using the supplied URL as text; it is not reverse-image matching.
 - **DMCA notice**: generate a reviewable takedown notice from a guided form.
 
 ## Quick start

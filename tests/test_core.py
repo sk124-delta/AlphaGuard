@@ -1,3 +1,4 @@
+import sys
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from sqlite3 import connect
@@ -25,11 +26,19 @@ from src.alphaguard.db import (
     send_password_reset,
 )
 from src.alphaguard.models import NoticeData
-from src.alphaguard.scanner import normalize_results
+from src.alphaguard.scanner import (
+    ScannerError,
+    image_search_provider_name,
+    keyless_visual_scan,
+    normalize_results,
+    scan_product_footprint,
+    scan_image,
+)
 from src.alphaguard.stego import SteganographyError, capacity_bytes, decode, encode, strip_metadata_lossless
 from src.alphaguard.legal_escalation import build_escalation_drafts
 from src.alphaguard.url_utils import (
     filter_whitelisted_matches,
+    is_http_url,
     primary_domain_from_url,
 )
 
@@ -55,6 +64,101 @@ def test_scanner_normalizes_lens_results():
     results = normalize_results({"visual_matches": [{"title": "Copy", "link": "https://www.example.com/a"}]})
     assert results[0].source == "example.com"
     assert results[0].position == 1
+
+
+def test_keyless_visual_scan_normalizes_duckduckgo_results(monkeypatch):
+    class FakeDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def images(self, *, keywords, max_results):
+            assert keywords == "https://store.example/image.jpg"
+            assert max_results == 5
+            return [
+                {
+                    "title": "Possible copy",
+                    "url": "https://copy.example/product",
+                    "image": "https://cdn.example/copy.jpg",
+                    "domain": "copy.example",
+                }
+            ]
+
+    monkeypatch.setitem(sys.modules, "duckduckgo_search", SimpleNamespace(DDGS=FakeDDGS))
+
+    results = keyless_visual_scan("https://store.example/image.jpg")
+
+    assert len(results) == 1
+    assert results[0].title == "Possible copy"
+    assert results[0].link == "https://copy.example/product"
+    assert results[0].source == "copy.example"
+    assert results[0].thumbnail == "https://cdn.example/copy.jpg"
+
+
+def test_scan_image_uses_keyless_search_without_serpapi_key(monkeypatch):
+    from src.alphaguard import scanner
+
+    expected = [SimpleNamespace(link="https://copy.example/product")]
+    monkeypatch.setattr(scanner, "_serpapi_key", lambda: None)
+    monkeypatch.setattr(scanner, "keyless_visual_scan", lambda image_url: expected)
+
+    assert scan_image("https://store.example/image.jpg") == expected
+    assert image_search_provider_name() == "DuckDuckGo Images keyword search"
+
+
+def test_keyless_visual_scan_surfaces_provider_failures(monkeypatch):
+    class FailingDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def images(self, *, keywords, max_results):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setitem(sys.modules, "duckduckgo_search", SimpleNamespace(DDGS=FailingDDGS))
+
+    try:
+        keyless_visual_scan("https://store.example/image.jpg")
+    except ScannerError as exc:
+        assert "DuckDuckGo Images search failed" in str(exc)
+        assert isinstance(exc.__cause__, RuntimeError)
+    else:
+        raise AssertionError("provider failures should not be treated as no matches")
+
+
+def test_product_footprint_search_excludes_registered_domain(monkeypatch):
+    class FakeDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def text(self, *, keywords, max_results):
+            assert keywords == '"Handmade mug"'
+            assert max_results == 5
+            return [
+                {
+                    "title": "Our product",
+                    "href": "https://shop.example/products/mug",
+                },
+                {
+                    "title": "Possible copy",
+                    "href": "https://copy.example/products/mug",
+                },
+            ]
+
+    monkeypatch.setitem(sys.modules, "duckduckgo_search", SimpleNamespace(DDGS=FakeDDGS))
+
+    results = scan_product_footprint(" Handmade mug ", "https://www.shop.example")
+
+    assert len(results) == 1
+    assert results[0].title == "Possible copy"
+    assert results[0].link == "https://copy.example/products/mug"
 
 
 def test_dmca_notice_contains_claims():
@@ -96,6 +200,15 @@ def test_filter_whitelisted_matches_excludes_partner_results():
 
 def test_primary_domain_normalizes_url_host():
     assert primary_domain_from_url("https://WWW.Store.Example/catalog/item") == "store.example"
+
+
+def test_http_url_validation_requires_supported_scheme_and_valid_host():
+    assert is_http_url(" https://store.example/image.jpg ")
+    assert is_http_url("http://localhost:8080/image.jpg")
+    assert not is_http_url("")
+    assert not is_http_url("javascript:alert(1)")
+    assert not is_http_url("https:///image.jpg")
+    assert not is_http_url("https://store.example:invalid/image.jpg")
 
 
 def test_escalation_drafts_cover_search_engines_and_providers():

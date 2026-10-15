@@ -3,6 +3,16 @@
 from urllib.parse import urlparse
 
 
+def is_http_url(url: str) -> bool:
+    """Return whether a URL has an HTTP(S) scheme and a valid hostname/port."""
+    try:
+        parsed = urlparse(url.strip())
+        _ = parsed.port
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
+
 def domain_is_whitelisted(url: str, whitelisted_partners: str) -> bool:
     hostname = (urlparse(url).hostname or "").lower().removeprefix("www.")
     if not hostname:
