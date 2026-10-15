@@ -1119,14 +1119,26 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
                     month = _now().strftime("%Y-%m")
                     trends = st.session_state.setdefault("infringement_trends", {})
                     trends[month] = trends.get(month, 0) + len(new_links)
-                    _save_activity(lambda: save_scan_results(st.session_state["user_email"], image_url, provider_name, results))
-                except ScannerError as exc:
-                    if str(exc) == "SERPAPI_KEY is not configured.":
-                        st.error("Scanner service is currently updating. Please try again shortly.")
-                    else:
-                        st.error(str(exc))
-                except DatabaseError as exc:
-                    st.error(f"Could not prepare takedown actions: {exc}")
+                    save_scan_results(
+                        st.session_state["user_email"],
+                        image_url,
+                        provider_name,
+                        results,
+                    )
+                except ScannerError:
+                    st.error(
+                        "The scan could not be completed. Please try again shortly."
+                    )
+                except DatabaseError:
+                    st.warning(
+                        "The scan completed, but its results could not be saved. "
+                        "Please try again."
+                    )
+                else:
+                    st.success(
+                        "Scan completed successfully. Check the Pending Action queue "
+                        "below for matches."
+                    )
     
     results = st.session_state.get("scan_results", [])
     if results:
@@ -1236,11 +1248,6 @@ def render_subscription_tiers() -> None:
         )
 
     st.markdown("---")
-    st.image(
-        os.path.join(os.path.dirname(__file__), "AlphaGuard Pro Subscription.png"),
-        caption="Scan QR to pay via Payoneer Mobile",
-        width=220,
-    )
     st.info(
         "Need custom enterprise invoicing or legal inquiries? "
         f"Contact: **{SUPPORT_EMAIL}**"
