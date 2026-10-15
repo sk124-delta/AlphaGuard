@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from zipfile import BadZipFile, ZipFile
 
 import streamlit as st
+import streamlit.components.v1 as components
 import extra_streamlit_components as stx
 from dotenv import load_dotenv
 from PIL import Image
@@ -228,19 +229,60 @@ def _restore_auth_session(cookie_manager) -> bool:
 
 
 def _process_password_recovery_link() -> None:
+    components.html(
+        """
+        <script>
+        const appWindow = window.parent;
+        const url = new URL(appWindow.location.href);
+        if (url.hash.includes('access_token')) {
+            const params = new URLSearchParams(url.hash.substring(1));
+            const accessToken = params.get('access_token');
+            const refreshToken = params.get('refresh_token');
+            if (params.get('type') === 'recovery' && accessToken) {
+                url.hash = '';
+                url.searchParams.set('type', 'recovery');
+                url.searchParams.set('token', accessToken);
+                if (refreshToken) {
+                    url.searchParams.set('refresh_token', refreshToken);
+                }
+                appWindow.history.replaceState(null, '', url.toString());
+                appWindow.location.reload();
+            }
+        }
+        </script>
+        """,
+        height=0,
+    )
+
     code = st.query_params.get("code")
-    if not code or st.session_state.get("password_reset_mode"):
+    recovery_type = st.query_params.get("type")
+    if st.session_state.get("password_reset_mode"):
         return
-    try:
-        access_token, refresh_token, email = exchange_password_reset_code(str(code))
-    except DatabaseError as exc:
-        st.session_state["reset_notice"] = str(exc)
-    else:
-        st.session_state["reset_access_token"] = access_token
-        st.session_state["reset_refresh_token"] = refresh_token
-        st.session_state["reset_email"] = email
-        st.session_state["password_reset_mode"] = True
-    st.query_params.clear()
+
+    if code:
+        try:
+            access_token, refresh_token, email = exchange_password_reset_code(str(code))
+        except DatabaseError as exc:
+            st.session_state["reset_notice"] = str(exc)
+        else:
+            st.session_state["reset_access_token"] = access_token
+            st.session_state["reset_refresh_token"] = refresh_token
+            st.session_state["reset_email"] = email
+            st.session_state["password_reset_mode"] = True
+        st.query_params.clear()
+    elif recovery_type == "recovery":
+        access_token = st.query_params.get("token")
+        refresh_token = st.query_params.get("refresh_token")
+        if not access_token or not refresh_token:
+            st.session_state["reset_notice"] = (
+                "The password reset link is invalid or incomplete. Request a new link."
+            )
+        else:
+            st.session_state["reset_access_token"] = str(access_token)
+            st.session_state["reset_refresh_token"] = str(refresh_token)
+            st.session_state["reset_email"] = ""
+            st.session_state["password_reset_mode"] = True
+        st.query_params.clear()
 
 
 def _download_text(label: str, text: str, filename: str, key: str | None = None) -> None:
@@ -1387,7 +1429,8 @@ def _login_screen(cookie_manager) -> None:
             else:
                 try:
                     send_password_reset(
-                        email, redirect_to="https://alphaguard.streamlit.app"
+                        email,
+                        redirect_to="https://alphaguard-fkre8tyjzbkpv2hjt5gvay.streamlit.app",
                     )
                 except DatabaseError as exc:
                     st.error(f"Could not send the password reset email: {exc}")
