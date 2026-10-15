@@ -1747,8 +1747,7 @@ def _main() -> None:
                 )
             except DatabaseError as exc:
                 st.error(str(exc))
-            else:
-                cookie_manager.delete(
+            else:                cookie_manager.delete(
                     AUTH_COOKIE_NAME, key="delete_alphaguard_session"
                 )
                 _clear_auth_session()
