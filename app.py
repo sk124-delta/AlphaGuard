@@ -1,5 +1,6 @@
 import os
 import hashlib
+import logging
 import math
 import re
 import secrets
@@ -107,6 +108,7 @@ DOWNLOAD_FORMAT_DETAILS = {
     "JPEG": ("jpg", "image/jpeg"),
     "PDF": ("pdf", "application/pdf"),
 }
+LOGGER = logging.getLogger(__name__)
 
 
 def _is_admin_email(email: str) -> bool:
@@ -1168,7 +1170,8 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
                 except ScannerError as exc:
                     st.error(f"The scan could not be completed: {exc}")
                 except DatabaseError as exc:
-                    st.warning(f"The scan completed, but its results could not be saved: {exc}")
+                    LOGGER.warning("The completed scan could not be saved.", exc_info=exc)
+                    st.caption("Scan completed; scan history could not be saved.")
                 else:
                     st.success(
                         "Scan completed successfully. Check the Pending Action queue "
