@@ -1420,7 +1420,7 @@ def _login_screen(cookie_manager) -> None:
                 try:
                     send_password_reset(
                         email,
-                        redirect_to="https://alphaguard-fkre8tyjzbkpv2hjt5gvay.streamlit.app",
+                        redirect_to="https://alphaguard-bjj2uybezhkleovau3p47k.streamlit.app",
                     )
                 except DatabaseError as exc:
                     LOGGER.warning(

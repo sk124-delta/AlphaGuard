@@ -2,7 +2,6 @@
 
 import hashlib
 import hmac
-import html
 import os
 import secrets
 import sqlite3
@@ -11,7 +10,6 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import UUID
 
-import requests
 from supabase import Client, create_client
 
 from .models import NoticeData, ScanResult
@@ -20,7 +18,6 @@ from .url_utils import primary_domain_from_url
 
 
 ADMIN_EMAILS = {"saniaiqbal870@gmail.com", "sanifaiqbal970@gmail.com"}
-RESEND_EMAILS_ENDPOINT = "https://api.resend.com/emails"
 
 
 class DatabaseError(RuntimeError):
@@ -357,60 +354,13 @@ def verify_user_credentials(email: str, password: str) -> bool:
 
 
 def send_password_reset(email: str, redirect_to: str) -> None:
-    """Generate a Supabase recovery link and deliver it through Resend."""
-    resend_api_key = _get_secret("RESEND_API_KEY")
-    resend_from_email = _get_secret("RESEND_FROM_EMAIL")
-    if not resend_api_key or not resend_from_email:
-        raise DatabaseError(
-            "RESEND_API_KEY and RESEND_FROM_EMAIL must be configured to send recovery email."
-        )
-
-    normalized_email = email.strip().lower()
+    """Ask Supabase Auth to email a password recovery link."""
     try:
-        response = get_client().auth.admin.generate_link(
-            {
-                "type": "recovery",
-                "email": normalized_email,
-                "options": {"redirect_to": redirect_to},
-            }
+        get_client().auth.reset_password_for_email(
+            email.strip().lower(), {"redirect_to": redirect_to}
         )
     except Exception as exc:
-        raise DatabaseError("Could not generate a password recovery link.") from exc
-
-    action_link = getattr(getattr(response, "properties", None), "action_link", None)
-    if not action_link:
-        raise DatabaseError("Supabase did not return a password recovery link.")
-
-    safe_link = html.escape(str(action_link), quote=True)
-    email_payload = {
-        "from": resend_from_email,
-        "to": [normalized_email],
-        "subject": "Reset your AlphaGuard password",
-        "html": (
-            "<p>Hello,</p>"
-            "<p>Use the link below to reset your AlphaGuard password:</p>"
-            f'<p><a href="{safe_link}"><strong>Reset password</strong></a></p>'
-            "<p>If you did not request this, you can ignore this email.</p>"
-        ),
-        "text": (
-            "Use the link below to reset your AlphaGuard password:\n"
-            f"{action_link}\n\n"
-            "If you did not request this, you can ignore this email."
-        ),
-    }
-    try:
-        resend_response = requests.post(
-            RESEND_EMAILS_ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {resend_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=email_payload,
-            timeout=15,
-        )
-        resend_response.raise_for_status()
-    except requests.RequestException as exc:
-        raise DatabaseError("Resend could not deliver the password recovery email.") from exc
+        raise DatabaseError("Could not send the password recovery email.") from exc
 
 
 def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
