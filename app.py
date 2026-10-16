@@ -32,7 +32,6 @@ from src.alphaguard.db import (
     get_user_dmca_notice_count,
     get_user_match_count,
     get_user_profile,
-    get_takedown_notice,
     get_user_tier,
     admin_update_takedown_notice,
     exchange_password_reset_code,
@@ -832,42 +831,16 @@ def _build_takedown_notice(result, profile: dict[str, object], user_email: str) 
     return notice_data, generate_notice(notice_data)
 
 
-def _takedown_action_queue(results, profile: dict[str, object], tier: str) -> None:
+def _takedown_action_queue(results, profile: dict[str, object]) -> None:
     user_email = st.session_state["user_email"]
     auth_user_id = st.session_state["auth_user_id"]
     for result in results:
         if not result.link:
             continue
         try:
-            notice_id = save_takedown_notice(auth_user_id, result.link, result.thumbnail or "")
+            save_takedown_notice(auth_user_id, result.link, result.thumbnail or "")
         except DatabaseError as exc:
             st.error(f"Could not queue {result.link}: {exc}")
-            continue
-        if tier != "Pro (Full Auto)":
-            continue
-        try:
-            queued_notice = get_takedown_notice(notice_id, auth_user_id)
-        except DatabaseError as exc:
-            st.error(f"Could not check the automatic notice status: {exc}")
-            continue
-        if not queued_notice or queued_notice.get("status") != "Pending Authorization":
-            continue
-        notices = st.session_state.setdefault("generated_takedown_notices", {})
-        if notice_id in notices:
-            continue
-        try:
-            notice_data, notice = _build_takedown_notice(result, profile, user_email)
-            save_dmca_notice_log(user_email, notice_data, notice)
-            update_takedown_notice_status(
-                notice_id,
-                auth_user_id,
-                "Authorized - Ready to Download",
-                generated_notice=notice,
-            )
-        except DatabaseError as exc:
-            st.error(f"Could not automatically prepare the notice for {result.link}: {exc}")
-            continue
-        notices[notice_id] = notice
 
     try:
         queue = get_takedown_notices(auth_user_id)
@@ -1086,7 +1059,7 @@ def _admin_review_queue() -> None:
                         st.rerun()
 
 
-def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
+def scanner_tab(profile: dict[str, object], can_scan: bool) -> None:
     st.subheader("OSINT Visual Radar")
     st.caption(
         "Search for unauthorized copies of protected logos, product imagery, and visual media."
@@ -1195,7 +1168,7 @@ def scanner_tab(tier: str, profile: dict[str, object], can_scan: bool) -> None:
             result.link, str(profile.get("whitelisted_partners") or "")
         )
     ]
-    _takedown_action_queue(queue_results, profile, tier)
+    _takedown_action_queue(queue_results, profile)
 
 
 def _dmca_pdf(notice_data: NoticeData, notice: str) -> bytes:
@@ -1764,7 +1737,7 @@ def _main() -> None:
     elif page == "Protect":
         steganography_tab()
     elif page == "Scan/Radar":
-        scanner_tab(tier, profile, can_scan)
+        scanner_tab(profile, can_scan)
     elif page == "DMCA Notice":
         dmca_tab(tier, trial_active)
     elif page == "Plans & Billing":

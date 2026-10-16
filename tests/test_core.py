@@ -1,4 +1,5 @@
 import sys
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from sqlite3 import connect
@@ -81,6 +82,55 @@ def test_scan_record_persists_match_count_with_normalized_results():
 
     assert record["matches_found"] == 2
     assert len(record["results"]) == 2
+
+
+def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypatch):
+    session_state = {
+        "user_email": "owner@example.com",
+        "auth_user_id": "user-123",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(app_module.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "form", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(app_module.st, "checkbox", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        app_module.st, "form_submit_button", lambda *args, **kwargs: False
+    )
+    queued = []
+    monkeypatch.setattr(
+        app_module,
+        "save_takedown_notice",
+        lambda user_id, target_url, image_url: queued.append(target_url),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "get_takedown_notices",
+        lambda user_id: [
+            {
+                "id": "notice-123",
+                "target_url": "https://copy.example/image.jpg",
+                "status": "Pending Authorization",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_build_takedown_notice",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("a notice must not be prepared before authorization")
+        ),
+    )
+
+    result = SimpleNamespace(
+        link="https://copy.example/image.jpg",
+        title="Possible copy",
+        thumbnail="",
+    )
+    app_module._takedown_action_queue([result], {})
+
+    assert queued == ["https://copy.example/image.jpg"]
+    assert "notice-123" not in session_state.get("generated_takedown_notices", {})
 
 
 def test_keyless_visual_scan_searches_filename_and_extracts_external_results(monkeypatch):
