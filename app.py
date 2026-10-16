@@ -1415,7 +1415,7 @@ def _login_screen(cookie_manager) -> None:
             )
         if submitted:
             if not email.strip():
-                st.warning("Enter your account email address.")
+                st.error("Please enter your email address.")
             else:
                 try:
                     send_password_reset(
