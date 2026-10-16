@@ -191,11 +191,27 @@ def delete_persistent_auth_session(session_id: str) -> None:
 
 
 def get_client() -> Client:
-    """Create a Supabase client from the configured environment variables."""
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
+    """Create a Supabase client from the configured environment or Streamlit secrets."""
+    try:
+        import streamlit as st
+
+        secrets = st.secrets
+    except (ImportError, FileNotFoundError):
+        secrets = {}
+    url = (
+        os.getenv("SUPABASE_URL")
+        or secrets.get("SUPABASE_URL")
+        or secrets.get("supabase_url")
+    )
+    key = (
+        os.getenv("SUPABASE_KEY")
+        or secrets.get("SUPABASE_KEY")
+        or secrets.get("supabase_key")
+    )
     if not url or not key:
-        raise DatabaseError("SUPABASE_URL and SUPABASE_KEY are not configured.")
+        raise DatabaseError(
+            "SUPABASE_URL and SUPABASE_KEY are not configured in Streamlit Secrets or environment variables."
+        )
     return create_client(url, key)
 
 

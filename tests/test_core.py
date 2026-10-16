@@ -504,6 +504,23 @@ def test_password_reset_uses_configured_supabase_redirect(monkeypatch):
     )
 
 
+def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
+    import streamlit as st
+
+    from src.alphaguard import db
+
+    secrets = {
+        "supabase_url": "https://project.supabase.co",
+        "supabase_key": "secret-key",
+    }
+    monkeypatch.setattr(st, "secrets", secrets, raising=False)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_KEY", raising=False)
+    monkeypatch.setattr(db, "create_client", lambda url, key: (url, key))
+
+    assert db.get_client() == ("https://project.supabase.co", "secret-key")
+
+
 def test_password_recovery_accepts_fragment_tokens(monkeypatch):
     query_params = {
         "type": "recovery",
