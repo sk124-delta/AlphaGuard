@@ -1407,7 +1407,7 @@ def _login_screen(cookie_manager) -> None:
                         _persist_auth_session(session, cookie_manager)
                         st.rerun()
     with reset_tab:
-        st.caption("Supabase Auth will email you a password-recovery link.")
+        st.caption("AlphaGuard will email you a password-recovery link.")
         with st.form("forgot_password_form"):
             email = st.text_input("Account email", key="forgot_password_email")
             submitted = st.form_submit_button(
@@ -1423,9 +1423,14 @@ def _login_screen(cookie_manager) -> None:
                         redirect_to="https://alphaguard-fkre8tyjzbkpv2hjt5gvay.streamlit.app",
                     )
                 except DatabaseError as exc:
-                    st.error(f"Could not send the password reset email: {exc}")
-                else:
-                    st.success("If the account exists, a password-recovery link has been sent.")
+                    LOGGER.warning(
+                        "Password recovery request could not be completed.",
+                        exc_info=exc,
+                    )
+                st.info(
+                    "If the account exists, a password-recovery link has been sent. "
+                    "If it does not arrive, check your inbox and contact support."
+                )
     notice = st.session_state.pop("reset_notice", "")
     if notice:
         st.error(notice)

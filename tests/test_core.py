@@ -481,12 +481,23 @@ def test_persistent_auth_session_is_server_side_and_expires(monkeypatch, tmp_pat
 def test_password_reset_uses_configured_supabase_redirect(monkeypatch):
     from src.alphaguard import db
 
-    class FakeAuth:
+    class FakeProperties:
+        action_link = "https://project.supabase.co/auth/v1/verify?token=secret&type=recovery"
+
+    class FakeResponse:
+        properties = FakeProperties()
+
+    class FakeAdmin:
         def __init__(self):
             self.call = None
 
-        def reset_password_for_email(self, email, options):
-            self.call = (email, options)
+        def generate_link(self, params):
+            self.call = params
+            return FakeResponse()
+
+    class FakeAuth:
+        def __init__(self):
+            self.admin = FakeAdmin()
 
     class FakeClient:
         def __init__(self):
@@ -494,14 +505,88 @@ def test_password_reset_uses_configured_supabase_redirect(monkeypatch):
 
     client = FakeClient()
     monkeypatch.setattr(db, "get_client", lambda: client)
+    monkeypatch.setattr(
+        db,
+        "_get_secret",
+        lambda name: {
+            "RESEND_API_KEY": "resend-secret",
+            "RESEND_FROM_EMAIL": "AlphaGuard <security@example.com>",
+        }.get(name),
+    )
+
+    class FakeResendResponse:
+        def raise_for_status(self):
+            pass
+
+    sent = {}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent.update(kwargs)
+        return FakeResendResponse()
+
+    monkeypatch.setattr(db.requests, "post", fake_post)
 
     redirect_url = "https://alphaguard-fkre8tyjzbkpv2hjt5gvay.streamlit.app"
     send_password_reset(" OWNER@EXAMPLE.COM ", redirect_url)
 
-    assert client.auth.call == (
-        "owner@example.com",
-        {"redirect_to": redirect_url},
-    )
+    assert client.auth.admin.call == {
+        "type": "recovery",
+        "email": "owner@example.com",
+        "options": {"redirect_to": redirect_url},
+    }
+    assert sent["url"] == db.RESEND_EMAILS_ENDPOINT
+    assert sent["headers"]["Authorization"] == "Bearer resend-secret"
+    assert sent["json"]["from"] == "AlphaGuard <security@example.com>"
+    assert sent["json"]["to"] == ["owner@example.com"]
+    assert "https://project.supabase.co/auth/v1/verify?token=secret" in sent["json"]["text"]
+
+
+def test_password_reset_requires_resend_configuration(monkeypatch):
+    from src.alphaguard import db
+
+    monkeypatch.setattr(db, "_get_secret", lambda name: None)
+
+    try:
+        send_password_reset("owner@example.com", "https://example.com/reset")
+    except db.DatabaseError as exc:
+        assert "RESEND_API_KEY and RESEND_FROM_EMAIL" in str(exc)
+    else:
+        raise AssertionError("password reset should require Resend configuration")
+
+
+def test_password_reset_surfaces_resend_delivery_failure(monkeypatch):
+    from requests import RequestException
+    from src.alphaguard import db
+
+    class FakeProperties:
+        action_link = "https://project.supabase.co/recovery"
+
+    class FakeAuth:
+        class Admin:
+            def generate_link(self, params):
+                return SimpleNamespace(properties=FakeProperties())
+
+        admin = Admin()
+
+    class FakeClient:
+        auth = FakeAuth()
+
+    monkeypatch.setattr(db, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(db, "_get_secret", lambda name: "configured")
+
+    def fail_post(*args, **kwargs):
+        raise RequestException("provider unavailable")
+
+    monkeypatch.setattr(db.requests, "post", fail_post)
+
+    try:
+        send_password_reset("owner@example.com", "https://example.com/reset")
+    except db.DatabaseError as exc:
+        assert "Resend could not deliver" in str(exc)
+        assert isinstance(exc.__cause__, RequestException)
+    else:
+        raise AssertionError("Resend delivery failures should not be hidden")
 
 
 def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
