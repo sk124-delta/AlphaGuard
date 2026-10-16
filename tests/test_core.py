@@ -510,8 +510,8 @@ def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
     from src.alphaguard import db
 
     secrets = {
-        "supabase_url": "https://project.supabase.co",
-        "supabase_key": "secret-key",
+        "supabase_url": " \nhttps://project.supabase.co\r\n",
+        "supabase_key": "\n secret-key \r\n",
     }
     monkeypatch.setattr(st, "secrets", secrets, raising=False)
     monkeypatch.delenv("SUPABASE_URL", raising=False)

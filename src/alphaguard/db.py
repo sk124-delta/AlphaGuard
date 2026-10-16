@@ -198,16 +198,20 @@ def get_client() -> Client:
         secrets = st.secrets
     except (ImportError, FileNotFoundError):
         secrets = {}
-    url = (
-        os.getenv("SUPABASE_URL")
-        or secrets.get("SUPABASE_URL")
-        or secrets.get("supabase_url")
-    )
-    key = (
-        os.getenv("SUPABASE_KEY")
-        or secrets.get("SUPABASE_KEY")
-        or secrets.get("supabase_key")
-    )
+
+    def get_secret(name: str) -> str | None:
+        value = (
+            os.getenv(name)
+            or secrets.get(name)
+            or secrets.get(name.lower())
+        )
+        if not value:
+            return None
+        normalized = str(value).replace("\n", "").replace("\r", "").strip()
+        return normalized or None
+
+    url = get_secret("SUPABASE_URL")
+    key = get_secret("SUPABASE_KEY")
     if not url or not key:
         raise DatabaseError(
             "SUPABASE_URL and SUPABASE_KEY are not configured in Streamlit Secrets or environment variables."
