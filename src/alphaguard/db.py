@@ -392,13 +392,15 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
 
 
 def update_user_password(
-    access_token: str, new_password: str, refresh_token: str = ""
+    access_token: str | None, new_password: str, refresh_token: str = ""
 ) -> tuple[bool, str]:
     """Update Supabase Auth and the local password hash for a recovered account."""
+    if not isinstance(access_token, str) or not access_token.strip():
+        return False, "Error updating password: the recovery access token is missing."
+
     try:
         client = get_client()
-        if access_token:
-            client.auth.set_session(access_token, refresh_token)
+        client.auth.set_session(access_token, refresh_token)
         response = client.auth.update_user({"password": new_password})
         auth_email = str(getattr(response.user, "email", "") or "").strip().lower()
         if not auth_email:
