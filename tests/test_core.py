@@ -602,11 +602,13 @@ def test_update_user_password_returns_success_and_syncs_local_password(
     monkeypatch.setattr(db, "get_client", lambda: client)
 
     success, message = db.update_user_password(
-        "owner@example.com", "new-password", "access-token", "refresh-token"
+        "access-token", "new-password", "refresh-token"
     )
 
     assert success is True
-    assert message == "Password updated successfully! You can now log in."
+    assert message == (
+        "Password updated successfully! You can now log in with your new password."
+    )
     assert client.auth.session == ("access-token", "refresh-token")
     assert db.verify_user_credentials("owner@example.com", "new-password")
 
@@ -627,11 +629,11 @@ def test_update_user_password_returns_failure_status(monkeypatch):
     monkeypatch.setattr(db, "get_client", lambda: FakeClient())
 
     success, message = db.update_user_password(
-        "owner@example.com", "new-password", "access-token", "refresh-token"
+        "access-token", "new-password", "refresh-token"
     )
 
     assert success is False
-    assert message == "Could not update password: provider unavailable"
+    assert message == "Error updating password: provider unavailable"
 
 
 def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
@@ -685,6 +687,21 @@ def test_password_recovery_accepts_access_token_query_parameter(monkeypatch):
     assert session_state["password_reset_mode"] is True
     assert session_state["reset_access_token"] == "access-token"
     assert session_state["reset_refresh_token"] == "refresh-token"
+    assert query_params == {}
+
+
+def test_password_recovery_accepts_access_token_without_refresh_token(monkeypatch):
+    query_params = {"access_token": "access-token"}
+    session_state = {"password_reset_mode": False}
+    monkeypatch.setattr(app_module.components, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "query_params", query_params, raising=False)
+    monkeypatch.setattr(app_module.st, "session_state", session_state, raising=False)
+
+    _process_password_recovery_link()
+
+    assert session_state["password_reset_mode"] is True
+    assert session_state["reset_access_token"] == "access-token"
+    assert session_state["reset_refresh_token"] == ""
     assert query_params == {}
 
 

@@ -279,13 +279,13 @@ def _process_password_recovery_link() -> None:
             st.query_params.get("token") or st.query_params.get("access_token")
         )
         refresh_token = st.query_params.get("refresh_token")
-        if not access_token or not refresh_token:
+        if not access_token:
             st.session_state["reset_notice"] = (
                 "The password reset link is invalid or incomplete. Request a new link."
             )
         else:
             st.session_state["reset_access_token"] = str(access_token)
-            st.session_state["reset_refresh_token"] = str(refresh_token)
+            st.session_state["reset_refresh_token"] = str(refresh_token or "")
             st.session_state["reset_email"] = ""
             st.session_state["password_reset_mode"] = True
         st.query_params.clear()
@@ -1450,9 +1450,8 @@ def _password_recovery_screen() -> None:
             st.warning("The passwords do not match.")
         else:
             success, message = update_user_password(
-                email,
-                password,
                 st.session_state["reset_access_token"],
+                password,
                 st.session_state["reset_refresh_token"],
             )
             if success:

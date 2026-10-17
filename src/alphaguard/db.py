@@ -392,14 +392,14 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
 
 
 def update_user_password(
-    email: str, new_password: str, access_token: str, refresh_token: str
+    access_token: str, new_password: str, refresh_token: str = ""
 ) -> tuple[bool, str]:
     """Update Supabase Auth and the local password hash for a recovered account."""
     try:
         client = get_client()
         client.auth.set_session(access_token, refresh_token)
         response = client.auth.update_user({"password": new_password})
-        auth_email = str(getattr(response.user, "email", "") or email).strip().lower()
+        auth_email = str(getattr(response.user, "email", "") or "").strip().lower()
         if not auth_email:
             raise DatabaseError("The password reset session did not identify an account.")
         with sqlite3.connect("alphaguard.db") as conn:
@@ -409,8 +409,11 @@ def update_user_password(
             )
     except Exception as exc:
         cause = exc.__cause__ or exc
-        return False, f"Could not update password: {cause}"
-    return True, "Password updated successfully! You can now log in."
+        return False, f"Error updating password: {cause}"
+    return (
+        True,
+        "Password updated successfully! You can now log in with your new password.",
+    )
 
 
 def get_user_settings(user_id: str) -> dict[str, Any]:
