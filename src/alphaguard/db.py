@@ -397,7 +397,8 @@ def update_user_password(
     """Update Supabase Auth and the local password hash for a recovered account."""
     try:
         client = get_client()
-        client.auth.set_session(access_token, refresh_token)
+        if access_token:
+            client.auth.set_session(access_token, refresh_token)
         response = client.auth.update_user({"password": new_password})
         auth_email = str(getattr(response.user, "email", "") or "").strip().lower()
         if not auth_email:

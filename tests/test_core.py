@@ -636,6 +636,32 @@ def test_update_user_password_returns_failure_status(monkeypatch):
     assert message == "Error updating password: provider unavailable"
 
 
+def test_update_user_password_skips_session_setup_without_token(monkeypatch):
+    from src.alphaguard import db
+
+    class FakeAuth:
+        session = None
+
+        def set_session(self, access_token, refresh_token):
+            self.session = (access_token, refresh_token)
+
+        def update_user(self, attributes):
+            raise RuntimeError("no authenticated session")
+
+    class FakeClient:
+        def __init__(self):
+            self.auth = FakeAuth()
+
+    client = FakeClient()
+    monkeypatch.setattr(db, "get_client", lambda: client)
+
+    success, message = db.update_user_password("", "new-password")
+
+    assert success is False
+    assert client.auth.session is None
+    assert message == "Error updating password: no authenticated session"
+
+
 def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
     import streamlit as st
 
