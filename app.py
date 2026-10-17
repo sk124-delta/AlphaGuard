@@ -274,8 +274,10 @@ def _process_password_recovery_link() -> None:
             st.session_state["reset_email"] = email
             st.session_state["password_reset_mode"] = True
         st.query_params.clear()
-    elif recovery_type == "recovery":
-        access_token = st.query_params.get("token")
+    elif recovery_type == "recovery" or st.query_params.get("access_token"):
+        access_token = (
+            st.query_params.get("token") or st.query_params.get("access_token")
+        )
         refresh_token = st.query_params.get("refresh_token")
         if not access_token or not refresh_token:
             st.session_state["reset_notice"] = (
@@ -1447,16 +1449,13 @@ def _password_recovery_screen() -> None:
         elif password != confirmation:
             st.warning("The passwords do not match.")
         else:
-            try:
-                update_user_password(
-                    email,
-                    password,
-                    st.session_state["reset_access_token"],
-                    st.session_state["reset_refresh_token"],
-                )
-            except DatabaseError as exc:
-                st.error(str(exc))
-            else:
+            success, message = update_user_password(
+                email,
+                password,
+                st.session_state["reset_access_token"],
+                st.session_state["reset_refresh_token"],
+            )
+            if success:
                 for key in (
                     "password_reset_mode",
                     "reset_access_token",
@@ -1464,8 +1463,11 @@ def _password_recovery_screen() -> None:
                     "reset_email",
                 ):
                     st.session_state.pop(key, None)
-                st.success("Password updated. You can now log in.")
+                st.success(message)
                 st.rerun()
+            else:
+                LOGGER.warning("Password recovery update failed: %s", message)
+                st.error(message)
 
 
 def _profile_needs_onboarding(profile: dict[str, object] | None) -> bool:

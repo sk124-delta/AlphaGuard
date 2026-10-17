@@ -569,6 +569,71 @@ def test_trigger_password_reset_returns_failure_status(monkeypatch):
     assert message == "Failed to send reset email: provider unavailable"
 
 
+def test_update_user_password_returns_success_and_syncs_local_password(
+    monkeypatch, tmp_path
+):
+    from src.alphaguard import db
+
+    class FakeUser:
+        email = "owner@example.com"
+
+    class FakeResponse:
+        user = FakeUser()
+
+    class FakeAuth:
+        def __init__(self):
+            self.session = None
+
+        def set_session(self, access_token, refresh_token):
+            self.session = (access_token, refresh_token)
+
+        def update_user(self, attributes):
+            assert attributes == {"password": "new-password"}
+            return FakeResponse()
+
+    class FakeClient:
+        def __init__(self):
+            self.auth = FakeAuth()
+
+    monkeypatch.chdir(tmp_path)
+    db.init_db()
+    db.create_user("owner@example.com", "old-password")
+    client = FakeClient()
+    monkeypatch.setattr(db, "get_client", lambda: client)
+
+    success, message = db.update_user_password(
+        "owner@example.com", "new-password", "access-token", "refresh-token"
+    )
+
+    assert success is True
+    assert message == "Password updated successfully! You can now log in."
+    assert client.auth.session == ("access-token", "refresh-token")
+    assert db.verify_user_credentials("owner@example.com", "new-password")
+
+
+def test_update_user_password_returns_failure_status(monkeypatch):
+    from src.alphaguard import db
+
+    class FakeAuth:
+        def set_session(self, access_token, refresh_token):
+            pass
+
+        def update_user(self, attributes):
+            raise RuntimeError("provider unavailable")
+
+    class FakeClient:
+        auth = FakeAuth()
+
+    monkeypatch.setattr(db, "get_client", lambda: FakeClient())
+
+    success, message = db.update_user_password(
+        "owner@example.com", "new-password", "access-token", "refresh-token"
+    )
+
+    assert success is False
+    assert message == "Could not update password: provider unavailable"
+
+
 def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
     import streamlit as st
 
@@ -590,6 +655,24 @@ def test_password_recovery_accepts_fragment_tokens(monkeypatch):
     query_params = {
         "type": "recovery",
         "token": "access-token",
+        "refresh_token": "refresh-token",
+    }
+    session_state = {"password_reset_mode": False}
+    monkeypatch.setattr(app_module.components, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "query_params", query_params, raising=False)
+    monkeypatch.setattr(app_module.st, "session_state", session_state, raising=False)
+
+    _process_password_recovery_link()
+
+    assert session_state["password_reset_mode"] is True
+    assert session_state["reset_access_token"] == "access-token"
+    assert session_state["reset_refresh_token"] == "refresh-token"
+    assert query_params == {}
+
+
+def test_password_recovery_accepts_access_token_query_parameter(monkeypatch):
+    query_params = {
+        "access_token": "access-token",
         "refresh_token": "refresh-token",
     }
     session_state = {"password_reset_mode": False}

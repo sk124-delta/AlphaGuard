@@ -391,22 +391,26 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
         raise DatabaseError("The password reset link is invalid or has expired.") from exc
 
 
-def update_user_password(email: str, new_password: str, access_token: str, refresh_token: str) -> None:
+def update_user_password(
+    email: str, new_password: str, access_token: str, refresh_token: str
+) -> tuple[bool, str]:
     """Update Supabase Auth and the local password hash for a recovered account."""
     try:
         client = get_client()
         client.auth.set_session(access_token, refresh_token)
         response = client.auth.update_user({"password": new_password})
         auth_email = str(getattr(response.user, "email", "") or email).strip().lower()
+        if not auth_email:
+            raise DatabaseError("The password reset session did not identify an account.")
+        with sqlite3.connect("alphaguard.db") as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE email = ?",
+                (_password_hash(new_password), auth_email),
+            )
     except Exception as exc:
-        raise DatabaseError("Could not update your password in Supabase Auth.") from exc
-    if not auth_email:
-        raise DatabaseError("The password reset session did not identify an account.")
-    with sqlite3.connect("alphaguard.db") as conn:
-        conn.execute(
-            "UPDATE users SET password_hash = ? WHERE email = ?",
-            (_password_hash(new_password), auth_email),
-        )
+        cause = exc.__cause__ or exc
+        return False, f"Could not update password: {cause}"
+    return True, "Password updated successfully! You can now log in."
 
 
 def get_user_settings(user_id: str) -> dict[str, Any]:
