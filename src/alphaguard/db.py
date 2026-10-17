@@ -18,6 +18,9 @@ from .url_utils import primary_domain_from_url
 
 
 ADMIN_EMAILS = {"saniaiqbal870@gmail.com", "sanifaiqbal970@gmail.com"}
+PASSWORD_RESET_REDIRECT_URL = (
+    "https://alphaguard-bjj2uybezhkleovau3p47k.streamlit.app"
+)
 
 
 class DatabaseError(RuntimeError):
@@ -361,6 +364,16 @@ def send_password_reset(email: str, redirect_to: str) -> None:
         )
     except Exception as exc:
         raise DatabaseError("Could not send the password recovery email.") from exc
+
+
+def trigger_password_reset(email: str) -> tuple[bool, str]:
+    """Send a password-recovery email and return a user-facing status."""
+    try:
+        send_password_reset(email, PASSWORD_RESET_REDIRECT_URL)
+    except DatabaseError as exc:
+        cause = exc.__cause__ or exc
+        return False, f"Failed to send reset email: {cause}"
+    return True, "Password reset link sent! Please check your inbox."
 
 
 def exchange_password_reset_code(code: str) -> tuple[str, str, str]:

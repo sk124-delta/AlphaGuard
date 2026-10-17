@@ -524,6 +524,51 @@ def test_password_reset_surfaces_supabase_failure(monkeypatch):
         raise AssertionError("Supabase reset failures should not be hidden")
 
 
+def test_trigger_password_reset_returns_status_and_uses_deployed_redirect(monkeypatch):
+    from src.alphaguard import db
+
+    class FakeAuth:
+        def __init__(self):
+            self.call = None
+
+        def reset_password_for_email(self, email, options):
+            self.call = (email, options)
+
+    class FakeClient:
+        def __init__(self):
+            self.auth = FakeAuth()
+
+    client = FakeClient()
+    monkeypatch.setattr(db, "get_client", lambda: client)
+
+    success, message = db.trigger_password_reset(" OWNER@EXAMPLE.COM ")
+
+    assert success is True
+    assert message == "Password reset link sent! Please check your inbox."
+    assert client.auth.call == (
+        "owner@example.com",
+        {"redirect_to": db.PASSWORD_RESET_REDIRECT_URL},
+    )
+
+
+def test_trigger_password_reset_returns_failure_status(monkeypatch):
+    from src.alphaguard import db
+
+    class FakeAuth:
+        def reset_password_for_email(self, email, options):
+            raise RuntimeError("provider unavailable")
+
+    class FakeClient:
+        auth = FakeAuth()
+
+    monkeypatch.setattr(db, "get_client", lambda: FakeClient())
+
+    success, message = db.trigger_password_reset("owner@example.com")
+
+    assert success is False
+    assert message == "Failed to send reset email: provider unavailable"
+
+
 def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
     import streamlit as st
 

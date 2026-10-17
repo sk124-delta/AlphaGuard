@@ -44,7 +44,7 @@ from src.alphaguard.db import (
     sign_out_auth_session,
     sign_up_with_password,
     refresh_auth_session,
-    send_password_reset,
+    trigger_password_reset,
     update_user_password,
     update_takedown_notice_status,
     save_dmca_notice_log,
@@ -1417,15 +1417,11 @@ def _login_screen(cookie_manager) -> None:
             if not email.strip():
                 st.error("Please enter your email address.")
             else:
-                try:
-                    send_password_reset(
-                        email,
-                        redirect_to="https://alphaguard-bjj2uybezhkleovau3p47k.streamlit.app",
-                    )
-                except DatabaseError as exc:
+                success, message = trigger_password_reset(email)
+                if not success:
                     LOGGER.warning(
-                        "Password recovery request could not be completed.",
-                        exc_info=exc,
+                        "Password recovery request could not be completed: %s",
+                        message,
                     )
                 st.info(
                     "If the account exists, a password-recovery link has been sent. "
