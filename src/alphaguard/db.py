@@ -391,62 +391,32 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
         raise DatabaseError("The password reset link is invalid or has expired.") from exc
 
 def update_user_password(access_token: str, new_password: str, refresh_token: str = ""):
-    """Safely updates user password using dynamic client initialization."""
+    """Safely restores the recovery session and updates the user's password."""
     try:
-        # Retrieve active Supabase client dynamically
         client = get_client()
 
-        # Restore session if access token exists
-        if access_token and isinstance(access_token, str) and len(access_token.strip()) > 0:
-            try:
-                client.auth.set_session(access_token, refresh_token or "")
-            except Exception as session_err:
-                print(f"[AUTH WARNING] Session restore warning: {session_err}")
+        # Ensure we have a valid access token
+        if not access_token or not isinstance(access_token, str) or not access_token.strip():
+            return False, "Password reset token is missing or expired. Please request a new reset link."
 
-        # Update password in Supabase Auth
+        # Establish recovery session in Supabase Auth
+        try:
+            r_token = refresh_token.strip() if refresh_token else access_token.strip()
+            client.auth.set_session(access_token.strip(), r_token)
+        except Exception as session_err:
+            print(f"[AUTH ERROR] Failed to set recovery session: {session_err}")
+            return False, "Recovery session expired. Please request a new password reset link."
+
+        # Update password
         res = client.auth.update_user({"password": new_password})
         
         if res:
             return True, "Password updated successfully! You can now log in."
         
         return True, "Password update completed."
-
-    except Exception as e:
+ except Exception as e:
         print(f"[AUTH ERROR] Password update error: {e}")
         return False, f"Could not update password: {str(e)}"
-    """Safely updates user password accepting optional refresh token."""
-    try:
-        # Restore session using access_token and optional refresh_token
-        if access_token and isinstance(access_token, str) and len(access_token.strip()) > 0:
-            try:
-                supabase.auth.set_session(access_token, refresh_token or "")
-            except Exception as session_err:
-                print(f"[AUTH WARNING] Session restore warning: {session_err}")
-
-        # Execute password update in Supabase Auth
-        res = supabase.auth.update_user({"password": new_password})
-        
-        if res:
-            return True, "Password updated successfully! You can now log in."
-        
-        return True, "Password update completed."
-
-    except Exception as e:
-        print(f"[AUTH ERROR] Password update error: {e}")
-        return False, f"Could not update password: {str(e)}"
-        with sqlite3.connect("alphaguard.db") as conn:
-            conn.execute(
-                "UPDATE users SET password_hash = ? WHERE email = ?",
-                (_password_hash(new_password), auth_email),
-            )
-    except Exception as exc:
-        cause = exc.__cause__ or exc
-        return False, f"Error updating password: {cause}"
-
-    return (
-        True,
-        "Password updated successfully! You can now log in with your new password.",
-    )
 
 
 def get_user_settings(user_id: str) -> dict[str, Any]:
@@ -454,8 +424,6 @@ def get_user_settings(user_id: str) -> dict[str, Any]:
     rows = _select("user_profiles", "settings", id=user_id)
     settings = rows[0].get("settings") if rows else {}
     return settings if isinstance(settings, dict) else {}
-
-
 def get_user_profile(user_id: str) -> dict[str, Any] | None:
     """Return a persisted onboarding and subscription profile."""
     try:
