@@ -19,7 +19,7 @@ from .url_utils import primary_domain_from_url
 
 ADMIN_EMAILS = {"saniaiqbal870@gmail.com", "sanifaiqbal970@gmail.com"}
 PASSWORD_RESET_REDIRECT_URL = (
-    "https://alphaguard-bjj2uybezhkleovau3p47k.streamlit.app"
+    "https://alphaguard-jwnslxjuymw6jygzcprgic.streamlit.app"
 )
 
 
