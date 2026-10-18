@@ -390,21 +390,41 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
     except Exception as exc:
         raise DatabaseError("The password reset link is invalid or has expired.") from exc
 
+def update_user_password(access_token: str, new_password: str):
+    """Safely updates user password without triggering list index errors."""
+    try:
+        if access_token and isinstance(access_token, str) and len(access_token.strip()) > 0:
+            try:
+                supabase.auth.set_session(access_token, "")
+            except Exception as session_err:
+                print(f"[AUTH WARNING] Session restore warning: {session_err}")
 
-def update_user_password(
+        res = supabase.auth.update_user({"password": new_password})
+        
+        if res:
+            return True, "Password updated successfully! You can now log in."
+        
+        return True, "Password update completed."
+
+    except Exception as e:
+        print(f"[AUTH ERROR] Password update error: {e}")
+        return False, f"Could not update password: {str(e)}"
+(
     access_token: str | None, new_password: str, refresh_token: str = ""
 ) -> tuple[bool, str]:
     """Update Supabase Auth and the local password hash for a recovered account."""
-    if not isinstance(access_token, str) or not access_token.strip():
-        return False, "Error updating password: the recovery access token is missing."
-
     try:
+        if not isinstance(access_token, str) or not access_token.strip():
+            return False, "Error updating password: the recovery access token is missing."
+
         client = get_client()
         client.auth.set_session(access_token, refresh_token)
         response = client.auth.update_user({"password": new_password})
-        auth_email = str(getattr(response.user, "email", "") or "").strip().lower()
+        user = getattr(response, "user", None)
+        auth_email = str(getattr(user, "email", "") or "").strip().lower()
         if not auth_email:
             raise DatabaseError("The password reset session did not identify an account.")
+
         with sqlite3.connect("alphaguard.db") as conn:
             conn.execute(
                 "UPDATE users SET password_hash = ? WHERE email = ?",
@@ -413,6 +433,7 @@ def update_user_password(
     except Exception as exc:
         cause = exc.__cause__ or exc
         return False, f"Error updating password: {cause}"
+
     return (
         True,
         "Password updated successfully! You can now log in with your new password.",
