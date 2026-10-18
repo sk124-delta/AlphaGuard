@@ -391,6 +391,29 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
         raise DatabaseError("The password reset link is invalid or has expired.") from exc
 
 def update_user_password(access_token: str, new_password: str, refresh_token: str = ""):
+    """Safely updates user password using dynamic client initialization."""
+    try:
+        # Retrieve active Supabase client dynamically
+        client = get_client()
+
+        # Restore session if access token exists
+        if access_token and isinstance(access_token, str) and len(access_token.strip()) > 0:
+            try:
+                client.auth.set_session(access_token, refresh_token or "")
+            except Exception as session_err:
+                print(f"[AUTH WARNING] Session restore warning: {session_err}")
+
+        # Update password in Supabase Auth
+        res = client.auth.update_user({"password": new_password})
+        
+        if res:
+            return True, "Password updated successfully! You can now log in."
+        
+        return True, "Password update completed."
+
+    except Exception as e:
+        print(f"[AUTH ERROR] Password update error: {e}")
+        return False, f"Could not update password: {str(e)}"
     """Safely updates user password accepting optional refresh token."""
     try:
         # Restore session using access_token and optional refresh_token
