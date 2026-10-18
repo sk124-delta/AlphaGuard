@@ -1444,8 +1444,8 @@ def _password_recovery_screen() -> None:
         confirmation = st.text_input("Confirm new password", type="password")
         submitted = st.form_submit_button("Update password", type="primary")
     if submitted:
-        if len(password) < 8:
-            st.warning("Use a password with at least 8 characters.")
+        if len(password) < 6:
+            st.warning("Use a password with at least 6 characters.")
         elif password != confirmation:
             st.warning("The passwords do not match.")
         else:
