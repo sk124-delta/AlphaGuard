@@ -390,15 +390,17 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
     except Exception as exc:
         raise DatabaseError("The password reset link is invalid or has expired.") from exc
 
-def update_user_password(access_token: str, new_password: str):
-    """Safely updates user password without triggering list index errors."""
+def update_user_password(access_token: str, new_password: str, refresh_token: str = ""):
+    """Safely updates user password accepting optional refresh token."""
     try:
+        # Restore session using access_token and optional refresh_token
         if access_token and isinstance(access_token, str) and len(access_token.strip()) > 0:
             try:
-                supabase.auth.set_session(access_token, "")
+                supabase.auth.set_session(access_token, refresh_token or "")
             except Exception as session_err:
                 print(f"[AUTH WARNING] Session restore warning: {session_err}")
 
+        # Execute password update in Supabase Auth
         res = supabase.auth.update_user({"password": new_password})
         
         if res:
@@ -409,12 +411,6 @@ def update_user_password(access_token: str, new_password: str):
     except Exception as e:
         print(f"[AUTH ERROR] Password update error: {e}")
         return False, f"Could not update password: {str(e)}"
-        response = client.auth.update_user({"password": new_password})
-        user = getattr(response, "user", None)
-        auth_email = str(getattr(user, "email", "") or "").strip().lower()
-        if not auth_email:
-            raise DatabaseError("The password reset session did not identify an account.")
-
         with sqlite3.connect("alphaguard.db") as conn:
             conn.execute(
                 "UPDATE users SET password_hash = ? WHERE email = ?",
