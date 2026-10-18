@@ -417,8 +417,6 @@ def update_user_password(access_token: str, new_password: str, refresh_token: st
  except Exception as e:
         print(f"[AUTH ERROR] Password update error: {e}")
         return False, f"Could not update password: {str(e)}"
-
-
 def get_user_settings(user_id: str) -> dict[str, Any]:
     """Return persisted preferences for a user."""
     rows = _select("user_profiles", "settings", id=user_id)
@@ -506,8 +504,6 @@ def save_user_settings(user_id: str, settings: dict[str, Any]) -> None:
         raise DatabaseError("Could not save user settings.") from exc
     if getattr(response, "error", None):
         raise DatabaseError(f"Could not save user settings: {response.error}")
-
-
 def get_user_tier(user_id: str) -> str:
     """Return a user's subscription tier, defaulting to the least-privileged tier."""
     try:
@@ -528,8 +524,6 @@ def get_user_id_by_stripe_customer(customer_id: str) -> str | None:
     """Find the Supabase Auth user associated with a Stripe customer ID."""
     rows = _select("user_profiles", "id", stripe_customer_id=customer_id)
     return str(rows[0]["id"]) if rows else None
-
-
 def update_user_subscription(
     user_id: str,
     tier: str,
