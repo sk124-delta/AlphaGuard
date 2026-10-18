@@ -66,13 +66,23 @@ def normalize_valueserp_results(payload: dict[str, Any]) -> list[ScanResult]:
 
 def _serpapi_key() -> str | None:
     """Resolve the managed search key without accepting user-supplied credentials."""
+    return _read_secret("SERPAPI_KEY")
+
+
+def _read_secret(name: str) -> str | None:
+    """Read a key from Streamlit Secrets, then the environment; ignore blanks and stray quotes."""
+    value = None
     try:
         import streamlit as st
 
-        key = st.secrets.get("SERPAPI_KEY")
-    except (ImportError, FileNotFoundError, KeyError):
-        key = None
-    return key or os.getenv("SERPAPI_KEY")
+        value = st.secrets.get(name)
+    except Exception:  # no secrets.toml locally, or Streamlit not installed
+        value = None
+    value = value or os.getenv(name)
+    if not value:
+        return None
+    cleaned = str(value).strip().strip('"').strip("'").strip()
+    return cleaned or None
 
 
 def image_search_provider_name() -> str:
@@ -226,10 +236,16 @@ def scan_image(image_url: str, timeout: int = 30) -> list[ScanResult]:
 
 
 def scan_image_valueserp(image_url: str, timeout: int = 30) -> list[ScanResult]:
-    """Search for visually similar images through ValueSERP reverse image search."""
-    key = _serpapi_key()
+    """Search for visually similar images through ValueSERP reverse image search.
+
+    ValueSERP needs its own VALUESERP_KEY. Without one, use the SerpApi Google Lens
+    scan so scheduled scans work with the same SERPAPI_KEY as the app.
+    """
+    key = _read_secret("VALUESERP_KEY")
     if not key:
-        raise ScannerError("SERPAPI_KEY is not configured.")
+        if _serpapi_key():
+            return scan_image(image_url, timeout=timeout)
+        raise ScannerError("Neither VALUESERP_KEY nor SERPAPI_KEY is configured.")
     if not image_url.strip():
         raise ScannerError("An image URL is required for a remote scan.")
     params = {

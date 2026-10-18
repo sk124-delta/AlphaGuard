@@ -194,16 +194,17 @@ def delete_persistent_auth_session(session_id: str) -> None:
 
 
 def _get_secret(name: str) -> str | None:
-    try:
-        import streamlit as st
+    value = os.getenv(name)
+    if not value:
+        try:
+            import streamlit as st
 
-        secrets = st.secrets
-    except (ImportError, FileNotFoundError):
-        secrets = {}
-    value = os.getenv(name) or secrets.get(name) or secrets.get(name.lower())
+            value = st.secrets.get(name) or st.secrets.get(name.lower())
+        except Exception:  # no secrets.toml locally, or Streamlit not installed
+            value = None
     if not value:
         return None
-    normalized = str(value).replace("\n", "").replace("\r", "").strip()
+    normalized = str(value).replace("\n", "").replace("\r", "").strip().strip('"').strip("'").strip()
     return normalized or None
 
 
