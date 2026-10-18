@@ -636,30 +636,38 @@ def test_update_user_password_returns_failure_status(monkeypatch):
     assert message == "Error updating password: provider unavailable"
 
 
-def test_update_user_password_skips_session_setup_without_token(monkeypatch):
+def test_update_user_password_rejects_missing_access_token(monkeypatch):
+    from src.alphaguard import db
+
+    def unexpected_client():
+        raise AssertionError("A missing recovery token must not use any auth session.")
+
+    monkeypatch.setattr(db, "get_client", unexpected_client)
+
+    success, message = db.update_user_password("", "new-password")
+    assert success is False
+    assert message == "Error updating password: the recovery access token is missing."
+
+
+def test_update_user_password_does_not_continue_after_session_failure(monkeypatch):
     from src.alphaguard import db
 
     class FakeAuth:
-        session = None
-
         def set_session(self, access_token, refresh_token):
-            self.session = (access_token, refresh_token)
+            raise RuntimeError("invalid recovery token")
 
         def update_user(self, attributes):
-            raise RuntimeError("no authenticated session")
+            raise AssertionError("Must not update another active auth session.")
 
     class FakeClient:
-        def __init__(self):
-            self.auth = FakeAuth()
+        auth = FakeAuth()
 
-    client = FakeClient()
-    monkeypatch.setattr(db, "get_client", lambda: client)
+    monkeypatch.setattr(db, "get_client", lambda: FakeClient())
 
-    success, message = db.update_user_password("", "new-password")
+    success, message = db.update_user_password("invalid-token", "new-password")
 
     assert success is False
-    assert client.auth.session is None
-    assert message == "Error updating password: no authenticated session"
+    assert message == "Error updating password: invalid recovery token"
 
 
 def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
