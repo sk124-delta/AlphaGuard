@@ -409,16 +409,6 @@ def update_user_password(access_token: str, new_password: str):
     except Exception as e:
         print(f"[AUTH ERROR] Password update error: {e}")
         return False, f"Could not update password: {str(e)}"
-(
-    access_token: str | None, new_password: str, refresh_token: str = ""
-) -> tuple[bool, str]:
-    """Update Supabase Auth and the local password hash for a recovered account."""
-    try:
-        if not isinstance(access_token, str) or not access_token.strip():
-            return False, "Error updating password: the recovery access token is missing."
-
-        client = get_client()
-        client.auth.set_session(access_token, refresh_token)
         response = client.auth.update_user({"password": new_password})
         user = getattr(response, "user", None)
         auth_email = str(getattr(user, "email", "") or "").strip().lower()
