@@ -409,10 +409,10 @@ def update_user_password(access_token: str, new_password: str, refresh_token: st
 
         # Update password
         res = client.auth.update_user({"password": new_password})
-        
+
         if res:
             return True, "Password updated successfully! You can now log in."
-        
+
         return True, "Password update completed."
  except Exception as e:
         print(f"[AUTH ERROR] Password update error: {e}")
