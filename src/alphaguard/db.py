@@ -414,7 +414,7 @@ def update_user_password(access_token: str, new_password: str, refresh_token: st
             return True, "Password updated successfully! You can now log in."
 
         return True, "Password update completed."
- except Exception as e:
+    except Exception as e:
         print(f"[AUTH ERROR] Password update error: {e}")
         return False, f"Could not update password: {str(e)}"
 def get_user_settings(user_id: str) -> dict[str, Any]:
