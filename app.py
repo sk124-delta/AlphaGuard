@@ -1123,10 +1123,8 @@ def _takedown_action_queue(results, profile: dict[str, object]) -> None:
     auth_user_id = st.session_state["auth_user_id"]
     try:
         queued_urls = set(get_existing_queued_urls(auth_user_id))
-    except DatabaseError as exc:
-        st.error(f"Could not check for existing queued notices: {exc}")
-        return
-
+    except Exception:
+        queued_urls = set()
     duplicate_count = 0
     for result in results:
         if not result.link:
