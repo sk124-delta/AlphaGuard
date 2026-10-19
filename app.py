@@ -2306,6 +2306,70 @@ def _analytics_dashboard(is_admin: bool = False) -> None:
                 for asset in assets:
                     st.write(f"{asset.get('user_id')}: {asset.get('image_url')}")
 
+    st.markdown("---")
+    st.subheader("Reports & PDF Downloads")
+    st.caption(
+        "Generate a current protection snapshot from saved account data. "
+        "Reports are created on demand and are not automatically scheduled or stored in an in-app archive."
+    )
+
+    account_email = str(st.session_state.get("user_email") or "")
+    auth_user_id = str(st.session_state.get("auth_user_id") or "")
+    profile = st.session_state.get("user_profile") or {}
+    tier = str(st.session_state.get("tier") or profile.get("tier") or "Unknown")
+    created_at = _now()
+    asset_total_label = (
+        "Global active protected assets" if is_admin else "Active protected assets"
+    )
+    match_total_label = "Global detected matches" if is_admin else "Detected matches"
+    report_lines = [
+        "ALPHAGUARD PROTECTION SNAPSHOT",
+        f"Generated (UTC): {created_at.isoformat()}",
+        f"Account: {account_email or 'Unavailable'}",
+        f"Current plan: {tier}",
+        "Reporting period: Current saved totals; not date-filtered.",
+        f"{asset_total_label}: {active_assets}",
+        f"{match_total_label}: {detected_matches}",
+    ]
+    if is_admin:
+        report_lines.append(
+            "Admin note: asset and match totals are global; notice and queue totals are account-scoped."
+        )
+
+    try:
+        dmca_count = get_user_dmca_notice_count(account_email)
+    except DatabaseError as exc:
+        LOGGER.warning("Could not load report DMCA notice count.", exc_info=exc)
+        report_lines.append("Generated DMCA notices: Unavailable")
+        st.warning(f"Generated notice total is unavailable for this report: {exc}")
+    else:
+        report_lines.append(f"Generated DMCA notices: {dmca_count}")
+
+    if auth_user_id:
+        try:
+            queued_count = len(get_takedown_notices(auth_user_id))
+        except DatabaseError as exc:
+            LOGGER.warning("Could not load report takedown queue count.", exc_info=exc)
+            report_lines.append("Takedown queue entries: Unavailable")
+            st.warning(f"Takedown queue total is unavailable for this report: {exc}")
+        else:
+            report_lines.append(f"Takedown queue entries: {queued_count}")
+    else:
+        report_lines.append("Takedown queue entries: Unavailable")
+        st.caption("The signed-in account ID is unavailable; the queue total was omitted.")
+
+    website_url = str(profile.get("website_url") or "").strip()
+    if website_url:
+        report_lines.append(f"Primary website: {website_url}")
+
+    st.download_button(
+        "Download current protection report (PDF)",
+        data=_pdf_bytes("AlphaGuard Protection Snapshot", report_lines),
+        file_name=f"AlphaGuard-Protection-Snapshot-{created_at:%Y-%m-%d}.pdf",
+        mime="application/pdf",
+        key="download_protection_snapshot",
+    )
+
 
 def _main() -> None:
     _initialize_session_state()

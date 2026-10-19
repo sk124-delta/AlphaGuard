@@ -39,6 +39,8 @@ The workspace sidebar and Scan paywall link to the Payoneer Standard subscriptio
 
 Verified administrators also have a sidebar plan-testing sandbox with Starter, Pro, and Enterprise limit previews, including domain/takedown caps, scan intervals, and fallback days. It is display-only and does not change subscription records, billing, feature access, or actual scan/escalation scheduling.
 
+The Dashboard can generate an on-demand PDF protection snapshot using the signed-in account's saved totals for protected assets, detected matches, generated DMCA notices, and takedown queue entries. Totals are not date-filtered; report scheduling and persistent in-app PDF archiving are not configured.
+
 Password recovery uses Supabase Auth and redirects to the deployed app URL. AlphaGuard supports recovery links that return a PKCE `code` or access and refresh tokens in the URL fragment; fragment tokens are captured and the URL is cleared before the password form is shown. AlphaGuard updates the Supabase Auth password and synchronizes the local password hash.
 
 To run the background ValueSERP monitor, set `SERPAPI_KEY` and start the scheduler from the project root:

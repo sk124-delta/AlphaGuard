@@ -163,6 +163,44 @@ def test_dashboard_metrics_falls_back_and_preserves_user_scope(monkeypatch):
     assert incomplete is True
 
 
+def test_dashboard_report_download_uses_saved_account_totals(monkeypatch):
+    session_state = {
+        "user_email": "owner@example.com",
+        "auth_user_id": "user-123",
+        "user_profile": {"website_url": "https://store.example"},
+        "tier": "Standard",
+    }
+    downloads = []
+    column = SimpleNamespace(metric=lambda *args, **kwargs: None)
+
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(app_module.st, "subheader", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "columns", lambda *args, **kwargs: (column, column))
+    monkeypatch.setattr(app_module.st, "download_button", lambda *args, **kwargs: downloads.append(kwargs))
+    monkeypatch.setattr(
+        app_module, "_dashboard_metrics", lambda is_admin=False: (2, 5, False)
+    )
+    monkeypatch.setattr(app_module, "get_user_dmca_notice_count", lambda user_id: 3)
+    monkeypatch.setattr(
+        app_module, "get_takedown_notices", lambda user_id: [{}, {}]
+    )
+
+    app_module._analytics_dashboard()
+
+    report = downloads[0]["data"]
+    report_text = report.decode("ascii")
+    assert report.startswith(b"%PDF-1.4")
+    assert downloads[0]["mime"] == "application/pdf"
+    assert "Current saved totals; not date-filtered." in report_text
+    assert "Active protected assets: 2" in report_text
+    assert "Detected matches: 5" in report_text
+    assert "Generated DMCA notices: 3" in report_text
+    assert "Takedown queue entries: 2" in report_text
+    assert "https://store.example" in report_text
+
+
 def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypatch):
     session_state = {
         "user_email": "owner@example.com",
