@@ -138,6 +138,34 @@ def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypat
     assert "notice-123" not in session_state.get("generated_takedown_notices", {})
 
 
+def test_queue_dmca_draft_prefills_match_and_requests_dmca_navigation(monkeypatch):
+    session_state = {
+        "user_email": "owner@example.com",
+        "primary_asset_url": "https://store.example/assets/photo.jpg",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    result = SimpleNamespace(
+        link="https://copy.example/photo.jpg",
+        raw={},
+    )
+
+    app_module._queue_dmca_draft(
+        result,
+        {
+            "owner_name": "Store Owner",
+            "business_email": "legal@example.com",
+            "mailing_address": "1 Main Street",
+            "website_url": "https://store.example",
+        },
+    )
+
+    assert session_state["auto_fill_infringing_url"] == "https://copy.example/photo.jpg"
+    assert session_state["auto_fill_original_url"] == "https://store.example/assets/photo.jpg"
+    assert session_state["jump_to_dmca"] is True
+    assert session_state["dmca_prefill"]["dmca_infringing_url"] == "https://copy.example/photo.jpg"
+    assert session_state["dmca_prefill"]["dmca_claimant_email"] == "legal@example.com"
+
+
 def test_keyless_visual_scan_searches_filename_and_extracts_external_results(monkeypatch):
     from src.alphaguard import scanner
 

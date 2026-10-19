@@ -853,22 +853,47 @@ def _match_review_center(results) -> None:
                     dismissed.add(result.link)
                     st.rerun()
                 if st.button("Draft Takedown Notice", key=f"draft_match_{index}", use_container_width=True):
-                    profile = st.session_state.get("user_profile") or {}
-                    st.session_state["dmca_prefill"] = {
-                        "dmca_claimant_name": str(profile.get("owner_name") or ""),
-                        "dmca_claimant_email": st.session_state["user_email"],
-                        "dmca_claimant_address": str(
-                            profile.get("mailing_address")
-                            or profile.get("owner_address")
-                            or ""
-                        ),
-                        "dmca_original_work": "Protected AlphaGuard artwork",
-                        "dmca_original_url": str(profile.get("website_url") or ""),
-                        "dmca_infringing_url": result.link,
-                        "dmca_signature": str(profile.get("owner_name") or ""),
-                    }
-                    st.session_state["last_infringing_url"] = result.link
+                    _queue_dmca_draft(
+                        result,
+                        st.session_state.get("user_profile") or {},
+                    )
                     st.rerun()
+
+
+def _queue_dmca_draft(result, profile: dict[str, object]) -> None:
+    """Prefill the DMCA form and select it for a chosen scan match."""
+    raw_result = getattr(result, "raw", {}) or {}
+    original_url = str(
+        raw_result.get("original_asset_url")
+        or st.session_state.get("primary_asset_url")
+        or profile.get("website_url")
+        or ""
+    )
+    owner_name = str(profile.get("owner_name") or "")
+    infringing_url = str(result.link)
+    prefill = {
+        "dmca_claimant_name": owner_name,
+        "dmca_claimant_email": str(
+            profile.get("business_email")
+            or st.session_state.get("user_email")
+            or ""
+        ),
+        "dmca_claimant_address": str(
+            profile.get("mailing_address")
+            or profile.get("owner_address")
+            or ""
+        ),
+        "dmca_original_work": "Protected AlphaGuard artwork",
+        "dmca_original_url": original_url,
+        "dmca_infringing_url": infringing_url,
+        "dmca_signature": owner_name,
+    }
+    st.session_state["dmca_prefill"] = prefill
+    st.session_state["auto_fill_infringing_url"] = infringing_url
+    st.session_state["auto_fill_original_url"] = original_url
+    st.session_state["last_infringing_url"] = infringing_url
+    st.session_state["last_original_url"] = original_url
+    st.session_state["jump_to_dmca"] = True
 
 
 def _build_takedown_notice(result, profile: dict[str, object], user_email: str) -> tuple[NoticeData, str]:
@@ -1203,6 +1228,11 @@ def scanner_tab(profile: dict[str, object], can_scan: bool) -> None:
                         "Scan completed successfully. Check the Pending Action queue "
                         "below for matches."
                     )
+                    st.session_state["primary_asset_url"] = (
+                        image_url.strip()
+                        or st.session_state.get("primary_asset_url")
+                        or str(profile.get("website_url") or "")
+                    )
     
     results = st.session_state.get("scan_results", [])
     if results:
@@ -1469,7 +1499,7 @@ def _dmca_notice_form_defaults() -> dict[str, str]:
 
 
 def dmca_tab(tier: str, trial_active: bool = False) -> None:
-    st.subheader("Draft a DMCA takedown notice")
+    st.header("Automated DMCA Notice Generator")
     prefill = st.session_state.pop("dmca_prefill", {})
     for key, value in prefill.items():
         st.session_state[key] = value
@@ -1492,6 +1522,16 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         "new_staged_host_email",
         st.session_state.get("detected_host_email", ""),
     )
+    if st.session_state.get("auto_fill_infringing_url"):
+        st.info(
+            "✨ Form prefilled from your profile and selected scan match. "
+            "Review all details and your signature before generating the notice."
+        )
+    else:
+        st.caption(
+            "Profile details and the most recent scan URLs are filled in when available. "
+            "Review all information before generating a notice."
+        )
     mode = st.radio("Notice mode", ["Single notice", "Bulk notices"], horizontal=True)
     if mode == "Bulk notices":
         if tier not in {"Pro", "Pro (Full Auto)", "Enterprise"} and not trial_active:
@@ -1549,7 +1589,11 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         original_url = st.text_input("Original work URL", key="dmca_original_url")
         infringing_url = st.text_input("Infringing URL", key="dmca_infringing_url")
         signature = st.text_input("Signature", placeholder="Type your full legal name", key="dmca_signature")
-        submitted = st.form_submit_button("Generate notice", type="primary", use_container_width=True)
+        submitted = st.form_submit_button(
+            "Generate & Save Notice",
+            type="primary",
+            use_container_width=True,
+        )
     if submitted:
         required = [claimant_name, claimant_email, claimant_address, original_work, original_url, infringing_url]
         if not all(value.strip() for value in required):
@@ -1987,6 +2031,9 @@ def _main() -> None:
         else:
             st.caption(f"Trial day {trial_day} of 14 · {days_remaining} day(s) remaining.")
 
+    if st.session_state.pop("jump_to_dmca", False):
+        st.session_state["workspace_page"] = "DMCA Notice"
+
     with st.sidebar:
         st.markdown(f"**Signed in:** {email}")
         st.caption(f"Plan: {tier}{' · Admin' if is_admin else ''}")
@@ -2005,6 +2052,7 @@ def _main() -> None:
             "Workspace",
             workspace_pages,
             label_visibility="collapsed",
+            key="workspace_page",
         )
         if st.button("Log out", use_container_width=True):
             try:
