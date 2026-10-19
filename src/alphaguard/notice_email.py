@@ -4,7 +4,7 @@ import os
 import smtplib
 import ssl
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 
 import streamlit as st
 
@@ -35,6 +35,9 @@ def send_notice_email(to_email: str, subject: str, body: str) -> bool:
     if not smtp_user or not smtp_pass:
         st.error("SMTP credentials are missing. Configure SMTP_USER and SMTP_PASS in Streamlit Secrets.")
         return False
+    if not is_valid_email(smtp_user):
+        st.error("SMTP_USER must be a valid sender email address.")
+        return False
     if not is_valid_email(to_email):
         st.error("Enter a valid recipient email address.")
         return False
@@ -42,10 +45,12 @@ def send_notice_email(to_email: str, subject: str, body: str) -> bool:
     try:
         smtp_port = int(smtp_port_value)
         msg = EmailMessage()
-        msg.set_content(body)
+        msg.set_content(body, subtype="plain", charset="utf-8")
         msg["Subject"] = subject
-        msg["From"] = smtp_user
+        msg["From"] = formataddr(("AlphaGuard Security", smtp_user))
         msg["To"] = to_email.strip()
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain=smtp_user.rsplit("@", 1)[1])
 
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.starttls(context=ssl.create_default_context())

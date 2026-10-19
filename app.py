@@ -1381,7 +1381,7 @@ def _dispatch_staged_host_notice(notice: dict[str, object], user_id: str) -> boo
     body = generate_host_notice(infringing_url, original_url)
     sent = send_notice_email(
         host_email,
-        "URGENT: Stage 2 DMCA Host Escalation",
+        f"URGENT: Stage 2 DMCA Host Escalation - {infringing_url}",
         body,
     )
     try:
@@ -1650,7 +1650,7 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
             owner_notice = generate_owner_notice(infringing_url.strip(), original_url.strip())
             if send_notice_email(
                 owner_email.strip(),
-                "DMCA Notice: Action Required (4-Day Grace Period)",
+                f"DMCA Copyright Infringement Notice - {infringing_url.strip()}",
                 owner_notice,
             ):
                 try:

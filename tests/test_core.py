@@ -496,6 +496,11 @@ def test_send_notice_email_uses_configured_smtp(monkeypatch):
     assert sent["port"] == 587
     assert sent["message"]["To"] == "owner@example.com"
     assert sent["message"]["Subject"] == "Subject"
+    assert sent["message"]["From"] == "AlphaGuard Security <sender@example.com>"
+    assert sent["message"]["Date"]
+    assert sent["message"]["Message-ID"].endswith("@example.com>")
+    assert sent["message"].get_content_type() == "text/plain"
+    assert sent["message"].get_content_charset() == "utf-8"
     assert sent["message"].get_content().strip() == "Body"
 
 
