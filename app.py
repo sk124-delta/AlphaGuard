@@ -467,12 +467,13 @@ def _package_protected_images(
             certificates.append((output_name, file_hash, timestamp))
             archive.writestr(f"{output_name}.provenance.txt", _provenance_text(output_name, file_hash, timestamp))
             _save_activity(
-                lambda filename=filename, image=image, message=message: save_encoded_image_metadata(
+                lambda filename=filename, image=image, message=message, output_name=output_name, file_hash=file_hash: save_encoded_image_metadata(
                     st.session_state["user_email"],
-                    filename,
+                    output_name,
                     image.size,
                     len(message.encode("utf-8")),
                     capacity_bytes(image),
+                    image_hash=file_hash,
                 )
             )
     return output.getvalue(), certificates
@@ -770,6 +771,7 @@ def steganography_tab() -> None:
             if st.button("Encode and download", type="primary", use_container_width=True):
                 try:
                     protected = encode(image, message)
+                    protected_hash = _sha256(to_png_bytes(protected))
                     _save_activity(
                         lambda: save_encoded_image_metadata(
                             st.session_state["user_email"],
@@ -778,6 +780,7 @@ def steganography_tab() -> None:
                             len(message.encode("utf-8")),
                             capacity_bytes(image),
                             image_url.strip(),
+                            protected_hash,
                         )
                     )
                     if image_url.strip():

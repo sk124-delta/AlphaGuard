@@ -568,6 +568,7 @@ def save_encoded_image_metadata(
     message_length: int,
     capacity: int,
     image_url: str = "",
+    image_hash: str = "",
 ) -> None:
     """Persist metadata for an image that successfully received an encoded message."""
     _insert(
@@ -575,11 +576,20 @@ def save_encoded_image_metadata(
         {
             "user_id": user_id,
             "filename": filename,
+            "asset_name": filename,
             "width": image_size[0],
             "height": image_size[1],
             "message_length": message_length,
             "capacity_bytes": capacity,
             "image_url": image_url,
+            "asset_url": image_url,
+            "image_hash": image_hash,
+            "metadata": {
+                "width": image_size[0],
+                "height": image_size[1],
+                "message_length": message_length,
+                "capacity_bytes": capacity,
+            },
             "is_active": bool(image_url),
         },
     )

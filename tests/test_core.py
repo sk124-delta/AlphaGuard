@@ -659,6 +659,38 @@ def test_save_dmca_notice_to_supabase_warns_when_save_fails(monkeypatch):
     assert "database unavailable" in warnings[0]
 
 
+def test_save_encoded_image_metadata_includes_asset_hash_and_metadata(monkeypatch):
+    from src.alphaguard import db
+
+    saved = {}
+    monkeypatch.setattr(
+        db,
+        "_insert",
+        lambda table, record: saved.update(table=table, record=record),
+    )
+
+    db.save_encoded_image_metadata(
+        "owner@example.com",
+        "protected-image.png",
+        (320, 240),
+        24,
+        1024,
+        "https://store.example/protected-image.png",
+        "a" * 64,
+    )
+
+    assert saved["table"] == "encoded_images"
+    assert saved["record"]["asset_name"] == "protected-image.png"
+    assert saved["record"]["asset_url"] == "https://store.example/protected-image.png"
+    assert saved["record"]["image_hash"] == "a" * 64
+    assert saved["record"]["metadata"] == {
+        "width": 320,
+        "height": 240,
+        "message_length": 24,
+        "capacity_bytes": 1024,
+    }
+
+
 def test_staged_notice_templates_include_both_asset_urls():
     owner_notice = generate_owner_notice("https://copy.example/item", "https://original.example/photo")
     host_notice = generate_host_notice("https://copy.example/item", "https://original.example/photo")
