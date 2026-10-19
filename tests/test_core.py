@@ -97,6 +97,7 @@ def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypat
     monkeypatch.setattr(app_module.st, "session_state", session_state)
     monkeypatch.setattr(app_module.st, "markdown", lambda *args, **kwargs: None)
     monkeypatch.setattr(app_module.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "info", lambda *args, **kwargs: None)
     monkeypatch.setattr(app_module.st, "form", lambda *args, **kwargs: nullcontext())
     monkeypatch.setattr(app_module.st, "checkbox", lambda *args, **kwargs: False)
     monkeypatch.setattr(
@@ -107,6 +108,11 @@ def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypat
         app_module,
         "save_takedown_notice",
         lambda user_id, target_url, image_url: queued.append(target_url),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "get_existing_queued_urls",
+        lambda user_id: [],
     )
     monkeypatch.setattr(
         app_module,
@@ -136,6 +142,78 @@ def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypat
 
     assert queued == ["https://copy.example/image.jpg"]
     assert "notice-123" not in session_state.get("generated_takedown_notices", {})
+
+
+def test_takedown_action_queue_skips_existing_and_repeated_urls(monkeypatch):
+    session_state = {
+        "user_email": "owner@example.com",
+        "auth_user_id": "user-123",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(app_module.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "info", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "form", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(app_module.st, "checkbox", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        app_module.st, "form_submit_button", lambda *args, **kwargs: False
+    )
+    queued = []
+    monkeypatch.setattr(
+        app_module,
+        "get_existing_queued_urls",
+        lambda user_id: ["https://copy.example/already-queued"],
+    )
+    monkeypatch.setattr(
+        app_module,
+        "save_takedown_notice",
+        lambda user_id, target_url, image_url: queued.append(target_url),
+    )
+    monkeypatch.setattr(app_module, "get_takedown_notices", lambda user_id: [])
+
+    app_module._takedown_action_queue(
+        [
+            SimpleNamespace(link="https://copy.example/already-queued", thumbnail=""),
+            SimpleNamespace(link="https://copy.example/new-match", thumbnail=""),
+            SimpleNamespace(link="https://copy.example/new-match", thumbnail=""),
+        ],
+        {},
+    )
+
+    assert queued == ["https://copy.example/new-match"]
+
+
+def test_takedown_action_queue_stops_if_existing_url_read_fails(monkeypatch):
+    from src.alphaguard.db import DatabaseError
+
+    errors = []
+    session_state = {
+        "user_email": "owner@example.com",
+        "auth_user_id": "user-123",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(app_module.st, "error", errors.append)
+    monkeypatch.setattr(
+        app_module,
+        "get_existing_queued_urls",
+        lambda user_id: (_ for _ in ()).throw(DatabaseError("database unavailable")),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "save_takedown_notice",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("Must not queue if duplicate-check read fails.")
+        ),
+    )
+
+    app_module._takedown_action_queue(
+        [SimpleNamespace(link="https://copy.example/match", thumbnail="")],
+        {},
+    )
+
+    assert errors == [
+        "Could not check for existing queued notices: database unavailable"
+    ]
 
 
 def test_queue_dmca_draft_prefills_match_and_requests_dmca_navigation(monkeypatch):

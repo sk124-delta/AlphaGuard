@@ -28,6 +28,7 @@ from src.alphaguard.db import (
     get_global_match_count,
     get_active_protected_assets,
     get_takedown_notices,
+    get_existing_queued_urls,
     get_admin_takedown_notices,
     get_user_dmca_notice_count,
     get_user_match_count,
@@ -1038,13 +1039,30 @@ def _build_takedown_notice(result, profile: dict[str, object], user_email: str) 
 def _takedown_action_queue(results, profile: dict[str, object]) -> None:
     user_email = st.session_state["user_email"]
     auth_user_id = st.session_state["auth_user_id"]
+    try:
+        queued_urls = set(get_existing_queued_urls(auth_user_id))
+    except DatabaseError as exc:
+        st.error(f"Could not check for existing queued notices: {exc}")
+        return
+
+    duplicate_count = 0
     for result in results:
         if not result.link:
+            continue
+        if result.link in queued_urls:
+            duplicate_count += 1
             continue
         try:
             save_takedown_notice(auth_user_id, result.link, result.thumbnail or "")
         except DatabaseError as exc:
             st.error(f"Could not queue {result.link}: {exc}")
+        else:
+            queued_urls.add(result.link)
+
+    if duplicate_count:
+        st.info(
+            f"Skipped {duplicate_count} match(es) already present in your takedown queue."
+        )
 
     try:
         queue = get_takedown_notices(auth_user_id)

@@ -728,6 +728,16 @@ def get_takedown_notices(user_id: str) -> list[dict[str, Any]]:
     )
 
 
+def get_existing_queued_urls(user_id: str) -> list[str]:
+    """Return target URLs already present in one user's takedown queue."""
+    rows = _select("takedown_notices", "target_url", user_id=user_id)
+    return [
+        str(row["target_url"])
+        for row in rows
+        if row.get("target_url")
+    ]
+
+
 def get_staged_takedown_notices(user_id: str) -> list[dict[str, Any]]:
     """Return staged-email tracker records belonging to one authenticated user."""
     staged_statuses = {"Owner Notified", "Stage 2 Sending", "Host Escalated"}
