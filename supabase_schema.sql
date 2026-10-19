@@ -321,6 +321,14 @@ alter table public.scan_results
     add column if not exists matches_found integer not null default 0;
 alter table public.scan_results enable row level security;
 
+drop policy if exists "Allow all inserts dmca_notices" on public.dmca_notices;
+drop policy if exists "Allow all selects dmca_notices" on public.dmca_notices;
+drop policy if exists "Users can insert their own notices" on public.dmca_notices;
+drop policy if exists "Users can view their own notices" on public.dmca_notices;
+drop policy if exists "Allow all inserts takedown_notices" on public.takedown_notices;
+drop policy if exists "Allow all selects takedown_notices" on public.takedown_notices;
+drop policy if exists "Allow all updates takedown_notices" on public.takedown_notices;
+
 drop policy if exists "Allow public inserts" on public.scan_results;
 drop policy if exists "Allow public reads" on public.scan_results;
 drop policy if exists "Users view own scan results" on public.scan_results;
