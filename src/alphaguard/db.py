@@ -391,6 +391,27 @@ def exchange_password_reset_code(code: str) -> tuple[str, str, str]:
     except Exception as exc:
         raise DatabaseError("The password reset link is invalid or has expired.") from exc
 
+
+def verify_password_reset_token_hash(token_hash: str) -> tuple[str, str, str]:
+    """Verify a Supabase recovery token hash and return its authenticated session."""
+    if not token_hash or not isinstance(token_hash, str) or not token_hash.strip():
+        raise DatabaseError("The password reset link is invalid or incomplete.")
+    try:
+        response = get_client().auth.verify_otp(
+            {"token_hash": token_hash.strip(), "type": "recovery"}
+        )
+        session = getattr(response, "session", None)
+        user = getattr(response, "user", None)
+        if not session:
+            raise DatabaseError("The password reset session is no longer valid.")
+        email = str(getattr(user, "email", "") or "")
+        return session.access_token, session.refresh_token, email
+    except DatabaseError:
+        raise
+    except Exception as exc:
+        raise DatabaseError("The password reset link is invalid or has expired.") from exc
+
+
 def update_user_password(access_token: str, new_password: str, refresh_token: str = ""):
     """Safely restores the recovery session and updates the user's password."""
     try:

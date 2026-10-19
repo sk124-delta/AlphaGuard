@@ -36,6 +36,7 @@ from src.alphaguard.db import (
     get_user_tier,
     admin_update_takedown_notice,
     exchange_password_reset_code,
+    verify_password_reset_token_hash,
     mark_takedown_notice_dispatched,
     claim_staged_takedown_escalation,
     get_staged_takedown_notices,
@@ -323,6 +324,19 @@ def _process_password_recovery_link() -> None:
     if code:
         try:
             access_token, refresh_token, email = exchange_password_reset_code(str(code))
+        except DatabaseError as exc:
+            st.session_state["reset_notice"] = str(exc)
+        else:
+            st.session_state["reset_access_token"] = access_token
+            st.session_state["reset_refresh_token"] = refresh_token
+            st.session_state["reset_email"] = email
+            st.session_state["password_reset_mode"] = True
+        st.query_params.clear()
+    elif recovery_type == "recovery" and st.query_params.get("token_hash"):
+        try:
+            access_token, refresh_token, email = verify_password_reset_token_hash(
+                str(st.query_params.get("token_hash"))
+            )
         except DatabaseError as exc:
             st.session_state["reset_notice"] = str(exc)
         else:

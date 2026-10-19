@@ -42,7 +42,7 @@ Verified administrators also have a sidebar plan-testing sandbox with Starter, P
 
 The Dashboard can generate an on-demand PDF protection snapshot using the signed-in account's saved totals for protected assets, detected matches, generated DMCA notices, and takedown queue entries. Totals are not date-filtered; report scheduling and persistent in-app PDF archiving are not configured.
 
-Password recovery uses Supabase Auth and redirects to the deployed app URL. AlphaGuard supports recovery links that return a PKCE `code` or access and refresh tokens in the URL fragment; fragment tokens are captured and the URL is cleared before the password form is shown. AlphaGuard updates the Supabase Auth password and synchronizes the local password hash.
+Password recovery uses Supabase Auth and redirects to the deployed app URL. AlphaGuard supports recovery links that return a PKCE `code`, a `token_hash`, or access and refresh tokens in the URL fragment; token hashes are verified as recovery OTPs, and URL parameters are cleared before the password form is shown. AlphaGuard updates the Supabase Auth password and synchronizes the local password hash.
 
 To run the background ValueSERP monitor, set `SERPAPI_KEY` and start the scheduler from the project root:
 

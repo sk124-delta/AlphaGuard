@@ -1718,6 +1718,83 @@ def test_password_recovery_accepts_access_token_without_refresh_token(monkeypatc
     assert query_params == {}
 
 
+def test_password_recovery_accepts_token_hash_and_verifies_session(monkeypatch):
+    query_params = {
+        "type": "recovery",
+        "token_hash": "one-time-token-hash",
+    }
+    session_state = {"password_reset_mode": False}
+    verified_hashes = []
+
+    monkeypatch.setattr(app_module.components, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "query_params", query_params, raising=False)
+    monkeypatch.setattr(app_module.st, "session_state", session_state, raising=False)
+
+    def verify_token_hash(token_hash):
+        verified_hashes.append(token_hash)
+        return "verified-access", "verified-refresh", "owner@example.com"
+
+    monkeypatch.setattr(app_module, "verify_password_reset_token_hash", verify_token_hash)
+
+    _process_password_recovery_link()
+
+    assert session_state["password_reset_mode"] is True
+    assert session_state["reset_access_token"] == "verified-access"
+    assert session_state["reset_refresh_token"] == "verified-refresh"
+    assert session_state["reset_email"] == "owner@example.com"
+    assert query_params == {}
+    assert verified_hashes == ["one-time-token-hash"]
+
+
+def test_verify_password_reset_token_hash_returns_verified_session(monkeypatch):
+    auth_calls = []
+
+    class FakeAuth:
+        def verify_otp(self, params):
+            auth_calls.append(params)
+            return SimpleNamespace(
+                session=SimpleNamespace(
+                    access_token="verified-access",
+                    refresh_token="verified-refresh",
+                ),
+                user=SimpleNamespace(email="owner@example.com"),
+            )
+
+    monkeypatch.setattr(db, "get_client", lambda: SimpleNamespace(auth=FakeAuth()))
+
+    assert db.verify_password_reset_token_hash(" token-hash ") == (
+        "verified-access",
+        "verified-refresh",
+        "owner@example.com",
+    )
+    assert auth_calls == [
+        {"token_hash": "token-hash", "type": "recovery"}
+    ]
+
+
+def test_password_recovery_invalid_token_hash_clears_query_and_reports_error(monkeypatch):
+    query_params = {"type": "recovery", "token_hash": "expired-token"}
+    session_state = {"password_reset_mode": False}
+    monkeypatch.setattr(app_module.components, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "query_params", query_params, raising=False)
+    monkeypatch.setattr(app_module.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(
+        app_module,
+        "verify_password_reset_token_hash",
+        lambda token_hash: (_ for _ in ()).throw(
+            db.DatabaseError("The password reset link is invalid or has expired.")
+        ),
+    )
+
+    _process_password_recovery_link()
+
+    assert session_state["password_reset_mode"] is False
+    assert session_state["reset_notice"] == (
+        "The password reset link is invalid or has expired."
+    )
+    assert query_params == {}
+
+
 def test_protected_image_conversion_supports_download_formats():
     image = Image.new("RGBA", (8, 8), (255, 0, 0, 128))
 
