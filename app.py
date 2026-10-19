@@ -303,7 +303,7 @@ def _process_password_recovery_link() -> None:
             if (params.get('type') === 'recovery' && accessToken) {
                 url.hash = '';
                 url.searchParams.set('type', 'recovery');
-                url.searchParams.set('token', accessToken);
+                url.searchParams.set('access_token', accessToken);
                 if (refreshToken) {
                     url.searchParams.set('refresh_token', refreshToken);
                 }
@@ -321,6 +321,7 @@ def _process_password_recovery_link() -> None:
     if st.session_state.get("password_reset_mode"):
         return
 
+    token_hash = st.query_params.get("token_hash") or st.query_params.get("token")
     if code:
         try:
             access_token, refresh_token, email = exchange_password_reset_code(str(code))
@@ -332,10 +333,10 @@ def _process_password_recovery_link() -> None:
             st.session_state["reset_email"] = email
             st.session_state["password_reset_mode"] = True
         st.query_params.clear()
-    elif recovery_type == "recovery" and st.query_params.get("token_hash"):
+    elif recovery_type == "recovery" and token_hash:
         try:
             access_token, refresh_token, email = verify_password_reset_token_hash(
-                str(st.query_params.get("token_hash"))
+                str(token_hash)
             )
         except DatabaseError as exc:
             st.session_state["reset_notice"] = str(exc)
@@ -346,9 +347,7 @@ def _process_password_recovery_link() -> None:
             st.session_state["password_reset_mode"] = True
         st.query_params.clear()
     elif recovery_type == "recovery" or st.query_params.get("access_token"):
-        access_token = (
-            st.query_params.get("token") or st.query_params.get("access_token")
-        )
+        access_token = st.query_params.get("access_token")
         refresh_token = st.query_params.get("refresh_token")
         if not access_token:
             st.session_state["reset_notice"] = (

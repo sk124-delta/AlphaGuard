@@ -1669,7 +1669,7 @@ def test_supabase_client_reads_lowercase_streamlit_secrets(monkeypatch):
 def test_password_recovery_accepts_fragment_tokens(monkeypatch):
     query_params = {
         "type": "recovery",
-        "token": "access-token",
+        "access_token": "access-token",
         "refresh_token": "refresh-token",
     }
     session_state = {"password_reset_mode": False}
@@ -1744,6 +1744,29 @@ def test_password_recovery_accepts_token_hash_and_verifies_session(monkeypatch):
     assert session_state["reset_email"] == "owner@example.com"
     assert query_params == {}
     assert verified_hashes == ["one-time-token-hash"]
+
+
+def test_password_recovery_accepts_token_alias_as_recovery_hash(monkeypatch):
+    query_params = {"type": "recovery", "token": "legacy-otp-hash"}
+    session_state = {"password_reset_mode": False}
+    verified_hashes = []
+
+    monkeypatch.setattr(app_module.components, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module.st, "query_params", query_params, raising=False)
+    monkeypatch.setattr(app_module.st, "session_state", session_state, raising=False)
+
+    def verify_token_hash(token_hash):
+        verified_hashes.append(token_hash)
+        return "verified-access", "verified-refresh", "owner@example.com"
+
+    monkeypatch.setattr(app_module, "verify_password_reset_token_hash", verify_token_hash)
+
+    _process_password_recovery_link()
+
+    assert verified_hashes == ["legacy-otp-hash"]
+    assert session_state["reset_access_token"] == "verified-access"
+    assert session_state["reset_refresh_token"] == "verified-refresh"
+    assert query_params == {}
 
 
 def test_verify_password_reset_token_hash_returns_verified_session(monkeypatch):
