@@ -468,6 +468,9 @@ create policy "Users update own notices"
     using ((select auth.uid()) = user_id)
     with check ((select auth.uid()) = user_id);
 
+revoke all on public.takedown_notices from public, anon;
+grant select, insert, update on public.takedown_notices to authenticated, service_role;
+
 do $$
 declare
     policy_row record;
