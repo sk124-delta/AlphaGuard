@@ -193,6 +193,67 @@ def test_scan_image_uses_keyless_search_without_serpapi_key(monkeypatch):
     assert image_search_provider_name() == "DuckDuckGo filename keyword search"
 
 
+def test_serpapi_scan_retries_timeouts_with_sixty_second_timeout(monkeypatch):
+    from requests import Timeout
+    from src.alphaguard import scanner
+
+    attempts = []
+    delays = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "visual_matches": [
+                    {"title": "Copy", "link": "https://copy.example/item"}
+                ]
+            }
+
+    def fake_get(url, *, params, timeout):
+        attempts.append((url, params, timeout))
+        if len(attempts) < 3:
+            raise Timeout("provider timed out")
+        return FakeResponse()
+
+    monkeypatch.setattr(scanner, "_serpapi_key", lambda: "managed-key")
+    monkeypatch.setattr(scanner.requests, "get", fake_get)
+    monkeypatch.setattr(scanner.time, "sleep", delays.append)
+
+    results = scan_image("https://store.example/image.jpg")
+
+    assert [result.link for result in results] == ["https://copy.example/item"]
+    assert len(attempts) == 3
+    assert all(attempt[2] == 90 for attempt in attempts)
+    assert delays == [1, 2]
+
+
+def test_serpapi_scan_surfaces_timeout_after_retry_limit(monkeypatch):
+    from requests import Timeout
+    from src.alphaguard import scanner
+
+    attempts = []
+
+    def failing_get(*args, **kwargs):
+        attempts.append(kwargs["timeout"])
+        raise Timeout("timed out")
+
+    monkeypatch.setattr(scanner, "_serpapi_key", lambda: "managed-key")
+    monkeypatch.setattr(scanner.requests, "get", failing_get)
+    monkeypatch.setattr(scanner.time, "sleep", lambda _: None)
+
+    try:
+        scan_image("https://store.example/image.jpg")
+    except ScannerError as exc:
+        assert "SerpApi request failed" in str(exc)
+        assert isinstance(exc.__cause__, Timeout)
+    else:
+        raise AssertionError("SerpApi timeout should remain an explicit scan failure")
+
+    assert attempts == [90, 90, 90]
+
+
 def test_keyless_visual_scan_surfaces_provider_failures(monkeypatch):
     from requests import RequestException
     from src.alphaguard import scanner

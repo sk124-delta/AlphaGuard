@@ -2,6 +2,7 @@
 
 import os
 import re
+import time
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -14,6 +15,9 @@ from .url_utils import domain_is_whitelisted
 SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
 VALUESERP_ENDPOINT = "https://api.valueserp.com/search"
 DUCKDUCKGO_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
+SERPAPI_TIMEOUT_SECONDS = 90
+SERPAPI_MAX_ATTEMPTS = 3
+SERPAPI_RETRY_BACKOFF_SECONDS = 1
 
 
 class ScannerError(RuntimeError):
@@ -214,6 +218,27 @@ def scan_product_footprint(
         raise ScannerError("DuckDuckGo product-title search failed.") from exc
 
 
+def _serpapi_get(params: dict[str, str], timeout: int) -> requests.Response:
+    """Retry transient SerpApi network and server errors with bounded backoff."""
+    for attempt in range(SERPAPI_MAX_ATTEMPTS):
+        try:
+            response = requests.get(SERPAPI_ENDPOINT, params=params, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt + 1 == SERPAPI_MAX_ATTEMPTS:
+                raise
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if (
+                attempt + 1 == SERPAPI_MAX_ATTEMPTS
+                or (status_code != 429 and (status_code is None or status_code < 500))
+            ):
+                raise
+        time.sleep(SERPAPI_RETRY_BACKOFF_SECONDS * (2**attempt))
+    raise RuntimeError("SerpApi retry loop ended unexpectedly.")
+
+
 def scan_image(image_url: str, timeout: int = 30) -> list[ScanResult]:
     """Search with Google Lens, falling back to filename-based web search."""
     key = _serpapi_key()
@@ -223,8 +248,7 @@ def scan_image(image_url: str, timeout: int = 30) -> list[ScanResult]:
         raise ScannerError("An image URL is required for a remote scan.")
     params = {"engine": "google_lens", "url": image_url, "api_key": key}
     try:
-        response = requests.get(SERPAPI_ENDPOINT, params=params, timeout=timeout)
-        response.raise_for_status()
+        response = _serpapi_get(params, max(timeout, SERPAPI_TIMEOUT_SECONDS))
         payload = response.json()
     except requests.RequestException as exc:
         raise ScannerError(f"SerpApi request failed: {exc}") from exc
