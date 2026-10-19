@@ -1687,7 +1687,7 @@ def _dmca_notice_form_defaults() -> dict[str, str]:
 
 
 def dmca_tab(tier: str, trial_active: bool = False) -> None:
-    st.header("Automated DMCA Notice Generator")
+    st.header("DMCA Notice Generator & Dispatch Center")
     contact_status = st.session_state.pop("target_contact_discovery", None)
     if contact_status:
         if contact_status.get("target_url"):
@@ -1839,9 +1839,10 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
     st.markdown("---")
     st.subheader("Manual Takedown Dispatch Center")
     st.caption(
-        "A selected scan match and available public contacts are prefilled for review. "
-        "Verify the recipient before sending. Stage 1 starts the four-day timer only after "
-        "you explicitly send the owner email; Stage 2 always requires separate confirmation."
+        "Select Draft Takedown on a scan result to prefill this single-notice form and "
+        "look up available public contacts. Verify all details before sending. Stage 1 "
+        "starts the four-day timer only after you explicitly send the owner email; "
+        "Stage 2 always requires separate confirmation."
     )
     with st.form("new_staged_notice_form"):
         infringing_url = st.text_input("Infringing Page URL", key="new_staged_infringing_url")
