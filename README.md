@@ -5,7 +5,7 @@ AlphaGuard is a small Streamlit workspace for content ownership records:
 - **Protect**: embed a UTF-8 ownership or provenance note in a PNG, JPG, or WebP image using RGB LSB steganography.
 - **Scan**: search a public image URL with managed SerpApi Google Lens when `SERPAPI_KEY` is configured, or fall back to a keyless DuckDuckGo search based on the image filename. SerpApi requests use a 90-second timeout and retry transient network, rate-limit, and server errors up to three attempts. The Scan page also searches the web for an optional product title and excludes the account's registered domain. Filename search is not reverse-image matching; it depends on searchable asset names and returns only actual external search results. Non-whitelisted matches enter Pending Action and require user authorization before a notice is generated; delivery is always manual.
 - **DMCA notice**: generate a reviewable takedown notice from a guided form.
-- **Staged notice email**: manually send a Stage 1 website-owner notice or a Stage 2 host/CDN escalation email through configured SMTP. Stage 2 requires confirmation that the owner was notified at least four days earlier and the issue remains unresolved; no email is sent automatically.
+- **Staged notice email**: selecting **Draft Takedown** on a scan match opens a single notice and looks up public domain registrant and hosting-network abuse contacts using RDAP and DNS-over-HTTPS. These records may be private or outdated and must be reviewed; emails are sent only after explicit user action through configured SMTP. Stage 2 requires confirmation that the owner was notified at least four days earlier and the issue remains unresolved.
 
 ## Quick start
 

@@ -57,6 +57,7 @@ from src.alphaguard.db import (
     init_db,
 )
 from src.alphaguard.dmca import generate_notice
+from src.alphaguard.contact_discovery import discover_target_contacts
 from src.alphaguard.models import NoticeData
 from takedown import (
     generate_host_notice,
@@ -867,11 +868,12 @@ def _match_review_center(results) -> None:
                 if st.button("Dismiss", key=f"dismiss_match_{index}", use_container_width=True):
                     dismissed.add(result.link)
                     st.rerun()
-                if st.button("Draft Notice", key=f"draft_match_{index}", use_container_width=True):
+                if st.button("Draft Takedown", key=f"draft_match_{index}", use_container_width=True):
                     _queue_dmca_draft(
                         result,
                         st.session_state.get("user_profile") or {},
                     )
+                    _auto_detect_and_prefill_target_contacts(str(result.link))
                     st.session_state["dmca_notice_mode"] = "Single notice"
                     st.rerun()
         st.markdown("#### Batch Takedown Action")
@@ -925,6 +927,8 @@ def _queue_dmca_draft(result, profile: dict[str, object]) -> None:
     st.session_state["auto_fill_original_url"] = original_url
     st.session_state["last_infringing_url"] = infringing_url
     st.session_state["last_original_url"] = original_url
+    st.session_state["new_staged_infringing_url"] = infringing_url
+    st.session_state["new_staged_original_url"] = original_url
     st.session_state["dmca_notice_mode"] = "Single notice"
     st.session_state["jump_to_dmca"] = True
 
@@ -933,6 +937,7 @@ def _queue_selected_dmca_matches(results, profile: dict[str, object]) -> None:
     """Route selected scan results into the matching single or bulk notice form."""
     if len(results) == 1:
         _queue_dmca_draft(results[0], profile)
+        _auto_detect_and_prefill_target_contacts(str(results[0].link))
         st.session_state["dmca_notice_mode"] = "Single notice"
         return
     if not results:
@@ -978,11 +983,43 @@ def _queue_selected_dmca_matches(results, profile: dict[str, object]) -> None:
     st.session_state["bulk_original_url"] = original_url
     st.session_state["bulk_infringing_urls"] = "\n".join(infringing_urls)
     st.session_state["bulk_signature"] = owner_name
+    st.session_state["new_staged_infringing_url"] = ""
+    st.session_state["new_staged_owner_email"] = ""
+    st.session_state["new_staged_host_email"] = ""
+    st.session_state["detected_host_provider"] = ""
+    st.session_state["target_contact_discovery"] = None
     st.session_state["last_original_url"] = original_url
     st.session_state["auto_fill_infringing_url"] = "\n".join(infringing_urls)
     st.session_state["auto_fill_original_url"] = original_url
     st.session_state["dmca_notice_mode"] = "Bulk notices"
     st.session_state["jump_to_dmca"] = True
+
+
+def _auto_detect_and_prefill_target_contacts(target_url: str) -> None:
+    """Look up public domain and hosting contacts for a selected scan target."""
+    st.session_state["new_staged_infringing_url"] = target_url
+    st.session_state["new_staged_owner_email"] = ""
+    st.session_state["new_staged_host_email"] = ""
+    st.session_state["detected_host_provider"] = ""
+    try:
+        contacts = discover_target_contacts(target_url)
+    except ValueError as exc:
+        st.session_state["target_contact_discovery"] = {
+            "target_url": target_url,
+            "error": str(exc),
+        }
+        return
+
+    st.session_state["new_staged_owner_email"] = contacts.owner_email
+    st.session_state["new_staged_host_email"] = contacts.host_abuse_email
+    st.session_state["detected_host_provider"] = contacts.hosting_provider
+    st.session_state["target_contact_discovery"] = {
+        "target_url": target_url,
+        "owner_email": contacts.owner_email,
+        "hosting_provider": contacts.hosting_provider,
+        "host_abuse_email": contacts.host_abuse_email,
+        "errors": contacts.errors,
+    }
 
 
 def _build_takedown_notice(result, profile: dict[str, object], user_email: str) -> tuple[NoticeData, str]:
@@ -1589,6 +1626,25 @@ def _dmca_notice_form_defaults() -> dict[str, str]:
 
 def dmca_tab(tier: str, trial_active: bool = False) -> None:
     st.header("Automated DMCA Notice Generator")
+    contact_status = st.session_state.pop("target_contact_discovery", None)
+    if contact_status:
+        if contact_status.get("target_url"):
+            st.caption(f"Public contact lookup target: {contact_status['target_url']}")
+        if contact_status.get("error"):
+            st.warning(f"Could not detect target contacts: {contact_status['error']}")
+        else:
+            st.info(
+                "Public contact lookup completed. Review the detected domain and hosting "
+                "contacts below; registration records may be privacy-redacted or outdated."
+            )
+            if contact_status.get("hosting_provider"):
+                st.caption(f"Detected hosting network: {contact_status['hosting_provider']}")
+            if not contact_status.get("owner_email"):
+                st.caption("No public domain-owner email was available.")
+            if not contact_status.get("host_abuse_email"):
+                st.caption("No public hosting-network abuse email was available.")
+            for error in contact_status.get("errors", ()):
+                st.warning(error)
     prefill = st.session_state.pop("dmca_prefill", {})
     for key, value in prefill.items():
         st.session_state[key] = value
@@ -1726,8 +1782,18 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
     )
     with st.form("new_staged_notice_form"):
         infringing_url = st.text_input("Infringing Page URL", key="new_staged_infringing_url")
-        owner_email = st.text_input("Website Owner / Admin Email", key="new_staged_owner_email")
-        host_email = st.text_input("Host / CDN Abuse Email", key="new_staged_host_email")
+        owner_email = st.text_input(
+            "Website Owner / Admin Email",
+            key="new_staged_owner_email",
+            help="May be a public domain registration contact rather than the website operator. Verify before sending.",
+        )
+        host_email = st.text_input(
+            "Host / CDN Abuse Email",
+            key="new_staged_host_email",
+            help="Detected from public IP registration data when available. Verify with the hosting provider.",
+        )
+        if st.session_state.get("detected_host_provider"):
+            st.caption(f"Detected hosting network: {st.session_state['detected_host_provider']}")
         original_url = st.text_input("Original Protected Asset URL", key="new_staged_original_url")
         submit_staged_notice = st.form_submit_button(
             "Send Owner Notice & Start 4-Day Timer",

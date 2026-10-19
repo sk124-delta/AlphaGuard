@@ -200,6 +200,114 @@ def test_queue_selected_dmca_matches_prefills_bulk_notice(monkeypatch):
     assert session_state["jump_to_dmca"] is True
 
 
+def test_queue_single_selected_match_detects_and_prefills_target_contacts(monkeypatch):
+    from src.alphaguard.contact_discovery import TargetContacts
+
+    session_state = {
+        "user_email": "owner@example.com",
+        "primary_asset_url": "https://store.example/assets/photo.jpg",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(
+        app_module,
+        "discover_target_contacts",
+        lambda url: TargetContacts(
+            owner_email="registrant@target.example",
+            hosting_provider="Example Hosting",
+            host_abuse_email="abuse@hosting.example",
+        ),
+    )
+
+    app_module._queue_selected_dmca_matches(
+        [SimpleNamespace(link="https://copy.example/photo.jpg", raw={})],
+        {"owner_name": "Store Owner"},
+    )
+
+    assert session_state["dmca_notice_mode"] == "Single notice"
+    assert session_state["new_staged_infringing_url"] == "https://copy.example/photo.jpg"
+    assert session_state["new_staged_owner_email"] == "registrant@target.example"
+    assert session_state["new_staged_host_email"] == "abuse@hosting.example"
+    assert session_state["detected_host_provider"] == "Example Hosting"
+    assert session_state["target_contact_discovery"]["target_url"] == "https://copy.example/photo.jpg"
+
+
+def test_contact_discovery_uses_public_domain_and_hosting_rdap(monkeypatch):
+    from src.alphaguard import contact_discovery
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/domain/copy.example"):
+            return FakeResponse(
+                {
+                    "entities": [
+                        {
+                            "roles": ["registrant"],
+                            "vcardArray": [
+                                "vcard",
+                                [["email", {}, "text", "owner@copy.example"]],
+                            ],
+                        }
+                    ]
+                }
+            )
+        if "dns-query" in url:
+            if kwargs["params"]["type"] == "A":
+                return FakeResponse(
+                    {"Answer": [{"data": "8.8.8.8"}]}
+                )
+            return FakeResponse({})
+        if url.endswith("/ip/8.8.8.8"):
+            return FakeResponse(
+                {
+                    "name": "Example Hosting Network",
+                    "entities": [
+                        {
+                            "roles": ["abuse"],
+                            "vcardArray": [
+                                "vcard",
+                                [["email", {}, "text", "abuse@hosting.example"]],
+                            ],
+                        }
+                    ],
+                }
+            )
+        raise AssertionError(f"Unexpected lookup URL: {url}")
+
+    monkeypatch.setattr(contact_discovery.requests, "get", fake_get)
+
+    contacts = contact_discovery.discover_target_contacts("https://www.copy.example/item")
+
+    assert contacts.owner_email == "owner@copy.example"
+    assert contacts.hosting_provider == "Example Hosting Network"
+    assert contacts.host_abuse_email == "abuse@hosting.example"
+    assert contacts.errors == ()
+
+
+def test_contact_discovery_does_not_query_non_public_ip(monkeypatch):
+    from src.alphaguard import contact_discovery
+
+    monkeypatch.setattr(
+        contact_discovery.requests,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Non-public IP addresses must not be queried.")
+        ),
+    )
+
+    contacts = contact_discovery.discover_target_contacts("http://127.0.0.1/item")
+
+    assert "not publicly routable" in contacts.errors[0]
+
+
 def test_keyless_visual_scan_searches_filename_and_extracts_external_results(monkeypatch):
     from src.alphaguard import scanner
 
