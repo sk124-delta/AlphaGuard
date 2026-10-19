@@ -1002,6 +1002,21 @@ def test_admin_override_is_case_insensitive():
     assert not _is_admin_email("user@example.com")
 
 
+def test_admin_plan_preview_specs_are_display_only_and_use_finite_labels():
+    assert set(app_module.ADMIN_PLAN_PREVIEWS) == {"Starter", "Pro", "Enterprise"}
+    assert app_module.ADMIN_PLAN_PREVIEWS["Starter"]["takedown_limit"] == "15 per month"
+    assert app_module.ADMIN_PLAN_PREVIEWS["Starter"]["scan_interval_hours"] == 24
+    assert app_module.ADMIN_PLAN_PREVIEWS["Starter"]["fallback_days"] == 7
+    assert app_module.ADMIN_PLAN_PREVIEWS["Pro"]["takedown_limit"] == "Unlimited"
+    assert app_module.ADMIN_PLAN_PREVIEWS["Pro"]["scan_interval_hours"] == 6
+    assert app_module.ADMIN_PLAN_PREVIEWS["Pro"]["fallback_days"] == 7
+    assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["domains"] == "Unlimited"
+    assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["max_domains"] is None
+    assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["takedown_limit_count"] is None
+    assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["scan_interval_hours"] == 1
+    assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["fallback_days"] == 4
+
+
 def test_whitelisted_domains_match_subdomains_only():
     allowed = "trusted.example, https://reseller.test/catalog"
     assert _domain_is_whitelisted("https://www.trusted.example/product", allowed)

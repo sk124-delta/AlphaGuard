@@ -114,6 +114,44 @@ AUTH_SESSION_MAX_AGE = 30 * 24 * 60 * 60
 PAYONEER_GROWTH_URL = "https://link.payoneer.com/Token?t=46755D76D4364792BD370CECD76A60E7&src=pl"
 PAYONEER_PRO_URL = "https://link.payoneer.com/Token?t=17262895A26A4AAE90841E7268F0D4CB&src=pl"
 PAYONEER_ENTERPRISE_URL = "https://link.payoneer.com/Token?t=A685ABEC12A642EC94690CC83597DAB1&src=pl"
+ADMIN_PLAN_PREVIEWS = {
+    "Starter": {
+        "domains": "1",
+        "max_domains": 1,
+        "whitelisted_partners": "3",
+        "scan_frequency": "Every 24 hours",
+        "scan_interval_hours": 24,
+        "takedown_limit": "15 per month",
+        "takedown_limit_count": 15,
+        "escalation": "7-day fallback",
+        "fallback_days": 7,
+        "support": "Standard email",
+    },
+    "Pro": {
+        "domains": "3",
+        "max_domains": 3,
+        "whitelisted_partners": "15",
+        "scan_frequency": "Every 6 hours",
+        "scan_interval_hours": 6,
+        "takedown_limit": "Unlimited",
+        "takedown_limit_count": None,
+        "escalation": "7-day fallback",
+        "fallback_days": 7,
+        "support": "Priority",
+    },
+    "Enterprise": {
+        "domains": "Unlimited",
+        "max_domains": None,
+        "whitelisted_partners": "Unlimited",
+        "scan_frequency": "Priority (every 1 hour)",
+        "scan_interval_hours": 1,
+        "takedown_limit": "Unlimited",
+        "takedown_limit_count": None,
+        "escalation": "Expedited (4-day fallback)",
+        "fallback_days": 4,
+        "support": "Dedicated concierge",
+    },
+}
 DOWNLOAD_FORMATS = ["PNG", "JPEG", "PDF"]
 DOWNLOAD_FORMAT_DETAILS = {
     "PNG": ("png", "image/png"),
@@ -2342,6 +2380,38 @@ def _main() -> None:
         st.caption(f"Plan: {tier}{' · Admin' if is_admin else ''}")
         st.markdown(f"[Technical support](mailto:{SUPPORT_EMAIL})")
         st.selectbox("Theme", ["Dark", "Light", "Grey"], key="selected_theme")
+        if is_admin:
+            st.markdown("---")
+            st.success("👑 Admin access granted")
+            st.caption(f"Verified admin: `{email}`")
+            st.subheader("Plan Testing Sandbox")
+            st.caption(
+                "Preview plan limits and feature descriptions. This does not change "
+                "subscription data, billing, or access controls."
+            )
+            st.session_state.setdefault("admin_plan_preview", "Enterprise")
+            if st.session_state["admin_plan_preview"] not in ADMIN_PLAN_PREVIEWS:
+                st.session_state["admin_plan_preview"] = "Enterprise"
+            preview_tier = st.selectbox(
+                "Plan preview",
+                list(ADMIN_PLAN_PREVIEWS),
+                key="admin_plan_preview",
+            )
+            preview = ADMIN_PLAN_PREVIEWS[preview_tier]
+            st.info(
+                f"**{preview_tier} preview** · Domains: {preview['domains']} · "
+                f"Whitelisted partners: {preview['whitelisted_partners']} · "
+                f"Scans: {preview['scan_frequency']} · "
+                f"Takedowns: {preview['takedown_limit']} · "
+                f"Escalation: {preview['escalation']} · "
+                f"Support: {preview['support']}"
+            )
+            st.caption(
+                f"Preview limits: {preview['max_domains'] if preview['max_domains'] is not None else 'Unlimited'} "
+                f"domain(s), {preview['takedown_limit_count'] if preview['takedown_limit_count'] is not None else 'Unlimited'} "
+                f"takedowns, scan every {preview['scan_interval_hours']} hour(s), "
+                f"{preview['fallback_days']}-day fallback."
+            )
         workspace_pages = [
             "Dashboard",
             "Protect",

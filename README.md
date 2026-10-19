@@ -37,6 +37,8 @@ Configure Stripe to send `checkout.session.completed` and `customer.subscription
 
 The workspace sidebar and Scan paywall link to the Payoneer Standard subscription checkout. Enterprise pricing is shown during onboarding; contact support for Enterprise subscription setup. Users without an active trial or paid tier can also open the paywall's QR code expander to pay on mobile. The SQL schema also creates a `users` table for local salted PBKDF2 password hashes retained for password-reset compatibility; Supabase Auth handles app sign-in.
 
+Verified administrators also have a sidebar plan-testing sandbox with Starter, Pro, and Enterprise limit previews, including domain/takedown caps, scan intervals, and fallback days. It is display-only and does not change subscription records, billing, feature access, or actual scan/escalation scheduling.
+
 Password recovery uses Supabase Auth and redirects to the deployed app URL. AlphaGuard supports recovery links that return a PKCE `code` or access and refresh tokens in the URL fragment; fragment tokens are captured and the URL is cleared before the password form is shown. AlphaGuard updates the Supabase Auth password and synchronizes the local password hash.
 
 To run the background ValueSERP monitor, set `SERPAPI_KEY` and start the scheduler from the project root:
