@@ -1793,10 +1793,11 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
             st.caption("Review the notice and confirm the legal requirements for your jurisdiction before sending it.")
 
     st.markdown("---")
-    st.subheader("Dispatch New Takedown Notice")
+    st.subheader("Manual Takedown Dispatch Center")
     st.caption(
-        "Stage 1 starts the four-day timer only after the owner email is sent. "
-        "Stage 2 is never sent automatically; it requires a separate confirmation."
+        "A selected scan match and available public contacts are prefilled for review. "
+        "Verify the recipient before sending. Stage 1 starts the four-day timer only after "
+        "you explicitly send the owner email; Stage 2 always requires separate confirmation."
     )
     with st.form("new_staged_notice_form"):
         infringing_url = st.text_input("Infringing Page URL", key="new_staged_infringing_url")
