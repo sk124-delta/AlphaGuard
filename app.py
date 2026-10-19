@@ -319,6 +319,37 @@ def _save_activity(save_action) -> None:
         st.warning(f"Activity was not saved to Supabase: {exc}")
 
 
+def save_dmca_notice_to_supabase(
+    sender_name: str,
+    contact_email: str,
+    address: str,
+    desc: str,
+    orig_url: str,
+    inf_url: str,
+    notice_text: str,
+) -> bool:
+    """Log a generated notice using the authenticated user's existing Supabase record."""
+    user_id = str(st.session_state.get("user_email") or "").strip()
+    if not user_id:
+        st.warning("Notice generated, but could not log to Supabase: no authenticated user is available.")
+        return False
+
+    notice_data = NoticeData(
+        claimant_name=sender_name,
+        claimant_email=contact_email,
+        claimant_address=address,
+        original_work=desc,
+        original_url=orig_url,
+        infringing_url=inf_url,
+    )
+    try:
+        save_dmca_notice_log(user_id, notice_data, notice_text)
+    except DatabaseError as exc:
+        st.warning(f"Notice generated, but could not log to Supabase: {exc}")
+        return False
+    return True
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1419,7 +1450,15 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
                     notice_data = NoticeData(claimant_name, claimant_email, claimant_address, original_work, original_url, infringing_url, signature=signature)
                     notice = generate_notice(notice_data)
                     notices.append(notice)
-                    _save_activity(lambda data=notice_data, text=notice: save_dmca_notice_log(st.session_state["user_email"], data, text))
+                    save_dmca_notice_to_supabase(
+                        notice_data.claimant_name,
+                        notice_data.claimant_email,
+                        notice_data.claimant_address,
+                        notice_data.original_work,
+                        notice_data.original_url,
+                        notice_data.infringing_url,
+                        notice,
+                    )
                 combined_notice = "\n\n".join(notices)
                 st.text_area("Generated notices", combined_notice, height=360)
                 _download_text("Download DMCA notices", combined_notice, "alphaguard-dmca-notices.txt")
@@ -1449,7 +1488,15 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         else:
             notice_data = NoticeData(claimant_name, claimant_email, claimant_address, original_work, original_url, infringing_url, signature=signature)
             notice = generate_notice(notice_data)
-            _save_activity(lambda: save_dmca_notice_log(st.session_state["user_email"], notice_data, notice))
+            save_dmca_notice_to_supabase(
+                notice_data.claimant_name,
+                notice_data.claimant_email,
+                notice_data.claimant_address,
+                notice_data.original_work,
+                notice_data.original_url,
+                notice_data.infringing_url,
+                notice,
+            )
             st.text_area("Generated notice", notice, height=360)
             _download_text("Download DMCA notice", notice, "alphaguard-dmca-notice.txt")
             st.download_button(

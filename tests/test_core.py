@@ -325,6 +325,66 @@ def test_dmca_notice_contains_claims():
     assert "good faith" in notice.lower()
 
 
+def test_save_dmca_notice_to_supabase_uses_authenticated_email_and_existing_schema(monkeypatch):
+    session_state = {"user_email": " owner@example.com "}
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    saved = []
+    monkeypatch.setattr(
+        app_module,
+        "save_dmca_notice_log",
+        lambda user_id, notice_data, notice: saved.append((user_id, notice_data, notice)),
+    )
+
+    success = app_module.save_dmca_notice_to_supabase(
+        "A. Owner",
+        "owner@example.com",
+        "1 Main St",
+        "My photo",
+        "https://original.test/photo",
+        "https://copy.test/photo",
+        "Generated DMCA notice",
+    )
+
+    assert success is True
+    assert len(saved) == 1
+    user_id, notice_data, notice = saved[0]
+    assert user_id == "owner@example.com"
+    assert notice_data.claimant_name == "A. Owner"
+    assert notice_data.claimant_email == "owner@example.com"
+    assert notice_data.claimant_address == "1 Main St"
+    assert notice_data.original_work == "My photo"
+    assert notice_data.original_url == "https://original.test/photo"
+    assert notice_data.infringing_url == "https://copy.test/photo"
+    assert notice == "Generated DMCA notice"
+
+
+def test_save_dmca_notice_to_supabase_warns_when_save_fails(monkeypatch):
+    from src.alphaguard.db import DatabaseError
+
+    session_state = {"user_email": "owner@example.com"}
+    warnings = []
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(app_module.st, "warning", warnings.append)
+    monkeypatch.setattr(
+        app_module,
+        "save_dmca_notice_log",
+        lambda *args: (_ for _ in ()).throw(DatabaseError("database unavailable")),
+    )
+
+    success = app_module.save_dmca_notice_to_supabase(
+        "A. Owner",
+        "owner@example.com",
+        "1 Main St",
+        "My photo",
+        "https://original.test/photo",
+        "https://copy.test/photo",
+        "Generated DMCA notice",
+    )
+
+    assert success is False
+    assert "database unavailable" in warnings[0]
+
+
 def test_staged_notice_templates_include_both_asset_urls():
     owner_notice = generate_owner_notice("https://copy.example/item", "https://original.example/photo")
     host_notice = generate_host_notice("https://copy.example/item", "https://original.example/photo")
