@@ -853,11 +853,21 @@ def _match_review_center(results) -> None:
                     dismissed.add(result.link)
                     st.rerun()
                 if st.button("Draft Takedown Notice", key=f"draft_match_{index}", use_container_width=True):
+                    profile = st.session_state.get("user_profile") or {}
                     st.session_state["dmca_prefill"] = {
+                        "dmca_claimant_name": str(profile.get("owner_name") or ""),
                         "dmca_claimant_email": st.session_state["user_email"],
+                        "dmca_claimant_address": str(
+                            profile.get("mailing_address")
+                            or profile.get("owner_address")
+                            or ""
+                        ),
                         "dmca_original_work": "Protected AlphaGuard artwork",
+                        "dmca_original_url": str(profile.get("website_url") or ""),
                         "dmca_infringing_url": result.link,
+                        "dmca_signature": str(profile.get("owner_name") or ""),
                     }
+                    st.session_state["last_infringing_url"] = result.link
                     st.rerun()
 
 
@@ -1420,11 +1430,68 @@ def _staged_notice_tracker() -> None:
                         st.rerun()
 
 
+def _dmca_notice_form_defaults() -> dict[str, str]:
+    profile = st.session_state.get("user_profile") or {}
+    owner_name = str(
+        st.session_state.get("user_org")
+        or st.session_state.get("profile_name")
+        or profile.get("owner_name")
+        or "AlphaGuard Protected User"
+    )
+    return {
+        "dmca_claimant_name": owner_name,
+        "dmca_claimant_email": str(
+            st.session_state.get("user_email")
+            or profile.get("business_email")
+            or ""
+        ),
+        "dmca_claimant_address": str(
+            st.session_state.get("user_address")
+            or profile.get("mailing_address")
+            or profile.get("owner_address")
+            or ""
+        ),
+        "dmca_original_work": str(
+            profile.get("shop_name")
+            and f"Copyrighted product imagery for {profile['shop_name']}"
+            or "Protected visual artwork"
+        ),
+        "dmca_original_url": str(
+            st.session_state.get("last_original_url")
+            or profile.get("website_url")
+            or ""
+        ),
+        "dmca_infringing_url": str(
+            st.session_state.get("last_infringing_url") or ""
+        ),
+        "dmca_signature": owner_name,
+    }
+
+
 def dmca_tab(tier: str, trial_active: bool = False) -> None:
     st.subheader("Draft a DMCA takedown notice")
     prefill = st.session_state.pop("dmca_prefill", {})
     for key, value in prefill.items():
         st.session_state[key] = value
+    for key, value in _dmca_notice_form_defaults().items():
+        st.session_state.setdefault(key, value)
+    st.session_state.setdefault(
+        "new_staged_infringing_url",
+        st.session_state.get("last_infringing_url", ""),
+    )
+    st.session_state.setdefault(
+        "new_staged_original_url",
+        st.session_state.get("last_original_url")
+        or (st.session_state.get("user_profile") or {}).get("website_url", ""),
+    )
+    st.session_state.setdefault(
+        "new_staged_owner_email",
+        st.session_state.get("detected_owner_email", ""),
+    )
+    st.session_state.setdefault(
+        "new_staged_host_email",
+        st.session_state.get("detected_host_email", ""),
+    )
     mode = st.radio("Notice mode", ["Single notice", "Bulk notices"], horizontal=True)
     if mode == "Bulk notices":
         if tier not in {"Pro", "Pro (Full Auto)", "Enterprise"} and not trial_active:
@@ -1459,6 +1526,8 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
                         notice_data.infringing_url,
                         notice,
                     )
+                st.session_state["last_infringing_url"] = urls[-1]
+                st.session_state["last_original_url"] = original_url.strip()
                 combined_notice = "\n\n".join(notices)
                 st.text_area("Generated notices", combined_notice, height=360)
                 _download_text("Download DMCA notices", combined_notice, "alphaguard-dmca-notices.txt")
@@ -1497,6 +1566,8 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
                 notice_data.infringing_url,
                 notice,
             )
+            st.session_state["last_infringing_url"] = infringing_url.strip()
+            st.session_state["last_original_url"] = original_url.strip()
             st.text_area("Generated notice", notice, height=360)
             _download_text("Download DMCA notice", notice, "alphaguard-dmca-notice.txt")
             st.download_button(
@@ -1549,6 +1620,10 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
                 except DatabaseError as exc:
                     st.error(f"Owner email was sent, but the tracker could not be saved: {exc}")
                 else:
+                    st.session_state["last_infringing_url"] = infringing_url.strip()
+                    st.session_state["last_original_url"] = original_url.strip()
+                    st.session_state["detected_owner_email"] = owner_email.strip()
+                    st.session_state["detected_host_email"] = host_email.strip()
                     st.success("Stage 1 notice sent! The four-day grace period has started.")
                     st.rerun()
 
@@ -1871,6 +1946,7 @@ def _main() -> None:
         return
     if profile is None:
         profile = {"email": email, "tier": "Enterprise"}
+    st.session_state["user_profile"] = profile
     st.session_state["is_admin"] = is_admin
     try:
         tier = "Enterprise" if is_admin else get_user_tier(st.session_state["auth_user_id"])

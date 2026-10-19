@@ -325,6 +325,32 @@ def test_dmca_notice_contains_claims():
     assert "good faith" in notice.lower()
 
 
+def test_dmca_notice_form_defaults_use_profile_and_recent_scan(monkeypatch):
+    session_state = {
+        "user_email": "owner@example.com",
+        "user_profile": {
+            "owner_name": "Example Shop",
+            "business_email": "legal@example.com",
+            "mailing_address": "1 Main Street",
+            "shop_name": "Example Shop",
+            "website_url": "https://shop.example",
+        },
+        "last_original_url": "https://assets.example/original.jpg",
+        "last_infringing_url": "https://copy.example/infringing.jpg",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+
+    defaults = app_module._dmca_notice_form_defaults()
+
+    assert defaults["dmca_claimant_name"] == "Example Shop"
+    assert defaults["dmca_claimant_email"] == "owner@example.com"
+    assert defaults["dmca_claimant_address"] == "1 Main Street"
+    assert defaults["dmca_original_work"] == "Copyrighted product imagery for Example Shop"
+    assert defaults["dmca_original_url"] == "https://assets.example/original.jpg"
+    assert defaults["dmca_infringing_url"] == "https://copy.example/infringing.jpg"
+    assert defaults["dmca_signature"] == "Example Shop"
+
+
 def test_save_dmca_notice_to_supabase_uses_authenticated_email_and_existing_schema(monkeypatch):
     session_state = {"user_email": " owner@example.com "}
     monkeypatch.setattr(app_module.st, "session_state", session_state)
