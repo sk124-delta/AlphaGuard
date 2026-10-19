@@ -89,6 +89,80 @@ def test_scan_record_persists_match_count_with_normalized_results():
     assert len(record["results"]) == 2
 
 
+def test_scan_history_save_falls_back_to_session_without_error_box(monkeypatch):
+    from src.alphaguard.db import DatabaseError
+
+    session_state = {"local_scan_history": []}
+    captions = []
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+    monkeypatch.setattr(app_module.st, "caption", captions.append)
+    monkeypatch.setattr(
+        app_module.st,
+        "error",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Scan-history fallback should not show an error box.")
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "save_scan_results",
+        lambda *args: (_ for _ in ()).throw(DatabaseError("database unavailable")),
+    )
+    results = normalize_results(
+        {"visual_matches": [{"title": "Copy", "link": "https://copy.example/image"}]}
+    )
+
+    saved = app_module._save_scan_history_with_fallback(
+        "owner@example.com",
+        "https://store.example/image.png",
+        "Google Lens",
+        results,
+    )
+
+    assert saved is False
+    assert session_state["local_scan_history"][0]["user_id"] == "owner@example.com"
+    assert session_state["local_scan_history"][0]["scan_url"] == "https://store.example/image.png"
+    assert session_state["local_scan_history"][0]["matches_found"] == 1
+    assert session_state["local_scan_history"][0]["scan_data"][0]["link"] == (
+        "https://copy.example/image"
+    )
+    assert "current session only" in captions[0]
+
+
+def test_dashboard_metrics_falls_back_and_preserves_user_scope(monkeypatch):
+    from src.alphaguard.db import DatabaseError
+
+    monkeypatch.setattr(
+        app_module.st,
+        "session_state",
+        {
+            "user_email": "owner@example.com",
+            "protected_asset_count": 2,
+            "infringements_detected": 5,
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "get_active_protected_assets",
+        lambda: [
+            {"user_id": "owner@example.com"},
+            {"user_id": "other@example.com"},
+            {"user_id": "OWNER@example.com"},
+        ],
+    )
+    monkeypatch.setattr(
+        app_module,
+        "get_user_match_count",
+        lambda user_id: (_ for _ in ()).throw(DatabaseError("database unavailable")),
+    )
+
+    assets, matches, incomplete = app_module._dashboard_metrics()
+
+    assert assets == 2
+    assert matches == 5
+    assert incomplete is True
+
+
 def test_takedown_queue_requires_authorization_before_preparing_notice(monkeypatch):
     session_state = {
         "user_email": "owner@example.com",

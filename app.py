@@ -59,7 +59,7 @@ from src.alphaguard.db import (
 )
 from src.alphaguard.dmca import generate_notice
 from src.alphaguard.contact_discovery import discover_target_contacts
-from src.alphaguard.models import NoticeData
+from src.alphaguard.models import NoticeData, ScanResult
 from takedown import (
     generate_host_notice,
     generate_notice_subject,
@@ -320,6 +320,47 @@ def _save_activity(save_action) -> None:
         save_action()
     except DatabaseError as exc:
         st.warning(f"Activity was not saved to Supabase: {exc}")
+
+
+def _save_scan_history_with_fallback(
+    user_id: str,
+    scan_url: str,
+    provider: str,
+    results: list[ScanResult],
+) -> bool:
+    """Persist a scan or retain it in this session if the database is unavailable."""
+    normalized_results = list(results)
+    try:
+        save_scan_results(user_id, scan_url, provider, normalized_results)
+    except DatabaseError as exc:
+        LOGGER.warning("Scan history could not be saved; retaining it in session.", exc_info=exc)
+        st.session_state.setdefault("local_scan_history", []).append(
+            {
+                "user_id": user_id,
+                "scan_url": scan_url,
+                "provider": provider,
+                "matches_found": len(normalized_results),
+                "scan_data": [
+                    {
+                        "title": result.title,
+                        "link": result.link,
+                        "source": result.source,
+                        "displayed_link": result.displayed_link,
+                        "thumbnail": result.thumbnail,
+                        "position": result.position,
+                        "raw": result.raw,
+                    }
+                    for result in normalized_results
+                ],
+                "created_at": _now().isoformat(),
+            }
+        )
+        st.caption(
+            "Scan history could not be saved to the database; this scan is retained "
+            "in the current session only."
+        )
+        return False
+    return True
 
 
 def save_dmca_notice_to_supabase(
@@ -1359,7 +1400,7 @@ def scanner_tab(profile: dict[str, object], can_scan: bool) -> None:
                     month = _now().strftime("%Y-%m")
                     trends = st.session_state.setdefault("infringement_trends", {})
                     trends[month] = trends.get(month, 0) + len(new_links)
-                    save_scan_results(
+                    _save_scan_history_with_fallback(
                         st.session_state["user_email"],
                         image_url.strip(),
                         provider_name,
@@ -2111,24 +2152,54 @@ def _trial_state(profile: dict[str, object], now: datetime) -> tuple[bool, int, 
     return now <= end, remaining_days, trial_day
 
 
-def _analytics_dashboard(is_admin: bool = False) -> None:
-    st.subheader("Analytics Dashboard")
-    active_assets = st.session_state.get("protected_asset_count", 0)
-    detected_matches = st.session_state.get("infringements_detected", 0)
+def _dashboard_metrics(is_admin: bool = False) -> tuple[int, int, bool]:
+    """Load durable dashboard metrics with the latest session values as fallback."""
+    active_assets = int(st.session_state.get("protected_asset_count", 0))
+    detected_matches = int(st.session_state.get("infringements_detected", 0))
+    metrics_incomplete = False
+
     try:
         assets = get_active_protected_assets()
+    except DatabaseError as exc:
+        LOGGER.warning("Could not load protected-asset dashboard metrics.", exc_info=exc)
+        metrics_incomplete = True
+    else:
         if is_admin:
             active_assets = max(active_assets, len(assets))
-            detected_matches = max(detected_matches, get_global_match_count())
         else:
-            user_email = st.session_state["user_email"]
+            user_email = str(st.session_state.get("user_email") or "").lower()
             active_assets = max(
                 active_assets,
-                len([asset for asset in assets if asset.get("user_id") == user_email]),
+                sum(
+                    1
+                    for asset in assets
+                    if str(asset.get("user_id") or "").lower() == user_email
+                ),
             )
-            detected_matches = max(detected_matches, get_user_match_count(user_email))
+
+    try:
+        if is_admin:
+            persisted_matches = get_global_match_count()
+        else:
+            persisted_matches = get_user_match_count(
+                str(st.session_state.get("user_email") or "")
+            )
     except DatabaseError as exc:
-        st.warning(f"Could not load complete persistent analytics: {exc}")
+        LOGGER.warning("Could not load match-count dashboard metrics.", exc_info=exc)
+        metrics_incomplete = True
+    else:
+        detected_matches = max(detected_matches, persisted_matches)
+
+    return active_assets, detected_matches, metrics_incomplete
+
+
+def _analytics_dashboard(is_admin: bool = False) -> None:
+    st.subheader("Analytics Dashboard")
+    active_assets, detected_matches, metrics_incomplete = _dashboard_metrics(is_admin)
+    if metrics_incomplete:
+        st.caption(
+            "Some saved metrics are unavailable; showing the latest values from this session where possible."
+        )
 
     asset_col, match_col = st.columns(2)
     asset_col.metric("Protected assets", active_assets)
@@ -2140,7 +2211,8 @@ def _analytics_dashboard(is_admin: bool = False) -> None:
         try:
             assets = get_active_protected_assets()
         except DatabaseError as exc:
-            st.error(f"Could not load global monitoring assets: {exc}")
+            LOGGER.warning("Could not load global monitoring assets.", exc_info=exc)
+            st.caption("Global monitoring assets are temporarily unavailable.")
         else:
             with st.expander("Global monitoring · active protected assets"):
                 if not assets:
