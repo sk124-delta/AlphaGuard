@@ -595,6 +595,50 @@ def save_encoded_image_metadata(
     )
 
 
+def save_storefront_catalog_assets(
+    user_id: str,
+    store_domain: str,
+    assets: Iterable[dict[str, Any]],
+) -> tuple[int, int]:
+    """Register new Shopify image URLs separately from AlphaGuard-encoded assets."""
+    existing_rows = _select(
+        "storefront_catalog_assets",
+        "image_url",
+        user_id=user_id,
+        store_domain=store_domain,
+    )
+    existing_urls = {
+        str(row.get("image_url") or "")
+        for row in existing_rows
+        if row.get("image_url")
+    }
+    inserted = 0
+    skipped = 0
+    for asset in assets:
+        image_url = str(asset.get("image_url") or "").strip()
+        if not image_url:
+            continue
+        if image_url in existing_urls:
+            skipped += 1
+            continue
+        _insert(
+            "storefront_catalog_assets",
+            {
+                "user_id": user_id,
+                "store_domain": store_domain,
+                "product_id": str(asset.get("product_id") or ""),
+                "product_title": str(asset.get("product_title") or ""),
+                "image_url": image_url,
+                "alt_text": str(asset.get("alt_text") or ""),
+                "width": int(asset.get("width") or 0),
+                "height": int(asset.get("height") or 0),
+            },
+        )
+        existing_urls.add(image_url)
+        inserted += 1
+    return inserted, skipped
+
+
 def get_active_protected_assets() -> list[dict[str, Any]]:
     """Return active encoded assets that have a public URL to scan."""
     return _select("encoded_images", "id, user_id, image_url", is_active=True)

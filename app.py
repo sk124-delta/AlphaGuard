@@ -54,11 +54,17 @@ from src.alphaguard.db import (
     update_staged_takedown_escalation,
     save_dmca_notice_log,
     save_encoded_image_metadata,
+    save_storefront_catalog_assets,
     save_scan_results,
     init_db,
 )
 from src.alphaguard.dmca import generate_notice
 from src.alphaguard.contact_discovery import discover_target_contacts
+from src.alphaguard.shopify_catalog import (
+    ShopifyCatalogError,
+    fetch_shopify_catalog_images,
+    normalize_shopify_domain,
+)
 from src.alphaguard.models import NoticeData, ScanResult
 from takedown import (
     generate_host_notice,
@@ -916,6 +922,58 @@ def steganography_tab() -> None:
                 st.text_area("Recovered message", decode(from_bytes(protected_upload.getvalue())), height=140)
             except SteganographyError as exc:
                 st.error(str(exc))
+    with st.expander("Shopify catalog image sync"):
+        st.caption(
+            "Import Shopify product image URLs into your separate catalog registry. "
+            "The current scan scheduler does not scan this registry. Images are not "
+            "downloaded, locally encoded, or added to the takedown queue."
+        )
+        st.caption(
+            "Use a Shopify Admin API token with read_products access. The token is used "
+            "for this request and is not saved to AlphaGuard's database."
+        )
+        with st.form("shopify_catalog_sync_form"):
+            store_domain_input = st.text_input(
+                "Shopify store domain",
+                placeholder="my-store.myshopify.com",
+                key="shopify_store_domain",
+            )
+            shopify_token = st.text_input(
+                "Shopify Admin API access token",
+                type="password",
+            )
+            sync_submitted = st.form_submit_button(
+                "Sync catalog images", type="primary"
+            )
+        if sync_submitted:
+            try:
+                store_domain = normalize_shopify_domain(store_domain_input)
+                catalog_assets = fetch_shopify_catalog_images(
+                    store_domain, shopify_token
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            except ShopifyCatalogError as exc:
+                st.error(str(exc))
+            else:
+                if not catalog_assets:
+                    st.info("No product images were found in this Shopify catalog.")
+                else:
+                    try:
+                        inserted, skipped = save_storefront_catalog_assets(
+                            str(st.session_state["user_email"]),
+                            store_domain,
+                            catalog_assets,
+                        )
+                    except DatabaseError as exc:
+                        st.error(
+                            f"Shopify images were retrieved, but catalog registration failed: {exc}"
+                        )
+                    else:
+                        st.success(
+                            f"Registered {inserted} new Shopify catalog image(s); "
+                            f"skipped {skipped} already registered image(s)."
+                        )
 
 
 def _match_review_center(results) -> None:

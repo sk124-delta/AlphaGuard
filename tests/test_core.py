@@ -19,7 +19,7 @@ from app import (
     _trial_state,
 )
 from src.alphaguard.dmca import generate_notice
-from src.alphaguard import cron_scanner
+from src.alphaguard import cron_scanner, db
 from src.alphaguard.db import (
     _scan_record,
     delete_persistent_auth_session,
@@ -43,6 +43,11 @@ from src.alphaguard.notice_email import (
     generate_host_notice,
     generate_owner_notice,
     send_notice_email,
+)
+from src.alphaguard.shopify_catalog import (
+    ShopifyCatalogError,
+    fetch_shopify_catalog_images,
+    normalize_shopify_domain,
 )
 from src.alphaguard.url_utils import (
     filter_whitelisted_matches,
@@ -802,6 +807,152 @@ def test_save_encoded_image_metadata_includes_asset_hash_and_metadata(monkeypatc
         "message_length": 24,
         "capacity_bytes": 1024,
     }
+
+
+def test_shopify_catalog_sync_fetches_product_images_read_only(monkeypatch):
+    requests_seen = []
+    response_payload = {
+        "data": {
+            "products": {
+                "edges": [
+                    {
+                        "node": {
+                            "id": "gid://shopify/Product/123",
+                            "title": "Jacket",
+                            "images": {
+                                "edges": [
+                                    {
+                                        "node": {
+                                            "url": "https://cdn.shopify.com/s/files/jacket.jpg",
+                                            "altText": "Leather jacket",
+                                            "width": 1200,
+                                            "height": 800,
+                                        }
+                                    }
+                                ],
+                                "pageInfo": {"hasNextPage": False},
+                            },
+                        }
+                    }
+                ],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+        }
+    }
+
+    def fake_post(url, **kwargs):
+        requests_seen.append((url, kwargs))
+        return SimpleNamespace(status_code=200, json=lambda: response_payload)
+
+    monkeypatch.setattr("src.alphaguard.shopify_catalog.requests.post", fake_post)
+    assets = fetch_shopify_catalog_images("My-Store.myshopify.com", "private-token")
+
+    assert len(assets) == 1
+    assert assets[0]["product_title"] == "Jacket"
+    assert assets[0]["image_url"] == "https://cdn.shopify.com/s/files/jacket.jpg"
+    assert "private-token" not in str(assets)
+    assert requests_seen[0][0].endswith("/admin/api/2026-07/graphql.json")
+    assert requests_seen[0][1]["headers"]["X-Shopify-Access-Token"] == "private-token"
+    assert requests_seen[0][1]["json"]["variables"] == {"after": None}
+
+
+def test_shopify_catalog_sync_rejects_non_shopify_domains_without_request(monkeypatch):
+    requested = []
+    monkeypatch.setattr(
+        "src.alphaguard.shopify_catalog.requests.post",
+        lambda *args, **kwargs: requested.append(args),
+    )
+
+    for domain in (
+        "https://my-store.myshopify.com/path",
+        "attacker.example",
+        "my-store.myshopify.com.attacker.example",
+    ):
+        try:
+            fetch_shopify_catalog_images(domain, "private-token")
+        except ValueError as exc:
+            assert ".myshopify.com" in str(exc)
+        else:
+            raise AssertionError("Invalid Shopify domain was accepted")
+
+    assert requested == []
+
+
+def test_shopify_catalog_sync_rejects_non_shopify_image_hosts(monkeypatch):
+    response_payload = {
+        "data": {
+            "products": {
+                "edges": [
+                    {
+                        "node": {
+                            "id": "gid://shopify/Product/123",
+                            "title": "Jacket",
+                            "images": {
+                                "edges": [
+                                    {
+                                        "node": {
+                                            "url": "https://attacker.example/image.jpg",
+                                            "altText": "",
+                                            "width": 100,
+                                            "height": 100,
+                                        }
+                                    }
+                                ],
+                                "pageInfo": {"hasNextPage": False},
+                            },
+                        }
+                    }
+                ],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "src.alphaguard.shopify_catalog.requests.post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200, json=lambda: response_payload
+        ),
+    )
+
+    try:
+        fetch_shopify_catalog_images("my-store.myshopify.com", "private-token")
+    except ShopifyCatalogError as exc:
+        assert "trusted CDN" in str(exc)
+    else:
+        raise AssertionError("Untrusted product image host was accepted")
+
+
+def test_shopify_catalog_database_save_skips_existing_and_repeated_urls(monkeypatch):
+    inserted = []
+    monkeypatch.setattr(
+        db,
+        "_select",
+        lambda table, columns, **filters: [
+            {"image_url": "https://cdn.shopify.com/existing.jpg"}
+        ],
+    )
+    monkeypatch.setattr(
+        db,
+        "_insert",
+        lambda table, record: inserted.append((table, record)),
+    )
+
+    added, skipped = db.save_storefront_catalog_assets(
+        "owner@example.com",
+        "my-store.myshopify.com",
+        [
+            {"image_url": "https://cdn.shopify.com/existing.jpg"},
+            {"image_url": "https://cdn.shopify.com/new.jpg", "width": 800},
+            {"image_url": "https://cdn.shopify.com/new.jpg", "width": 800},
+        ],
+    )
+
+    assert added == 1
+    assert skipped == 2
+    assert len(inserted) == 1
+    assert inserted[0][0] == "storefront_catalog_assets"
+    assert inserted[0][1]["width"] == 800
+    assert inserted[0][1]["height"] == 0
 
 
 def test_staged_notice_templates_include_both_asset_urls():

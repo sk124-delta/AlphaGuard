@@ -14,3 +14,8 @@ supabase
 requests
 duckduckgo-search
 beautifulsoup4
+streamlit
+supabase
+whois
+reportlab
+requests
