@@ -164,6 +164,40 @@ def test_queue_dmca_draft_prefills_match_and_requests_dmca_navigation(monkeypatc
     assert session_state["jump_to_dmca"] is True
     assert session_state["dmca_prefill"]["dmca_infringing_url"] == "https://copy.example/photo.jpg"
     assert session_state["dmca_prefill"]["dmca_claimant_email"] == "legal@example.com"
+    assert session_state["dmca_notice_mode"] == "Single notice"
+
+
+def test_queue_selected_dmca_matches_prefills_bulk_notice(monkeypatch):
+    session_state = {
+        "user_email": "owner@example.com",
+        "primary_asset_url": "https://store.example/assets/photo.jpg",
+    }
+    monkeypatch.setattr(app_module.st, "session_state", session_state)
+
+    app_module._queue_selected_dmca_matches(
+        [
+            SimpleNamespace(link="https://copy.example/one.jpg"),
+            SimpleNamespace(link="https://copy.example/two.jpg"),
+        ],
+        {
+            "owner_name": "Store Owner",
+            "business_email": "legal@example.com",
+            "mailing_address": "1 Main Street",
+            "website_url": "https://store.example",
+            "shop_name": "Example Shop",
+        },
+    )
+
+    assert session_state["dmca_notice_mode"] == "Bulk notices"
+    assert session_state["bulk_claimant_name"] == "Store Owner"
+    assert session_state["bulk_claimant_email"] == "legal@example.com"
+    assert session_state["bulk_claimant_address"] == "1 Main Street"
+    assert session_state["bulk_original_url"] == "https://store.example/assets/photo.jpg"
+    assert session_state["bulk_infringing_urls"] == (
+        "https://copy.example/one.jpg\nhttps://copy.example/two.jpg"
+    )
+    assert session_state["bulk_signature"] == "Store Owner"
+    assert session_state["jump_to_dmca"] is True
 
 
 def test_keyless_visual_scan_searches_filename_and_extracts_external_results(monkeypatch):
@@ -451,6 +485,16 @@ def test_staged_notice_templates_include_both_asset_urls():
     assert "4 days ago" in host_notice
     assert "https://copy.example/item" in host_notice
     assert "https://original.example/photo" in host_notice
+
+
+def test_generate_notice_subject_includes_timestamp(monkeypatch):
+    import takedown
+
+    monkeypatch.setattr(takedown.time, "time", lambda: 1_797_000_123)
+
+    assert takedown.generate_notice_subject() == (
+        "Notice of Copyright Infringement - Ref: AG-2026-1797000123"
+    )
 
 
 def test_send_notice_email_uses_configured_smtp(monkeypatch):

@@ -60,6 +60,7 @@ from src.alphaguard.dmca import generate_notice
 from src.alphaguard.models import NoticeData
 from takedown import (
     generate_host_notice,
+    generate_notice_subject,
     generate_owner_notice,
     is_valid_email,
     send_notice_email,
@@ -838,26 +839,57 @@ def _match_review_center(results) -> None:
     active_results = [result for result in results if result.link not in dismissed]
     with st.container(border=True):
         st.markdown("### Match Review Center")
-        st.caption("Review detected matches and move promising results into a takedown notice.")
+        st.caption("Review live scan results and select matches to prepare DMCA notices.")
         if not active_results:
             st.info("No active matches require review.")
             return
+        selected_items = []
         for index, result in enumerate(active_results):
-            action_col, detail_col = st.columns([1, 4])
-            with detail_col:
-                st.markdown(f"**{result.title}**  \n{result.link}")
-                if result.source:
+            select_col, image_col, detail_col, action_col = st.columns([0.7, 1.2, 4, 1.5])
+            with select_col:
+                selected = st.checkbox(
+                    "Select",
+                    key=f"select_match_{hashlib.sha256(result.link.encode('utf-8')).hexdigest()[:16]}",
+                    label_visibility="collapsed",
+                )
+                if selected:
+                    selected_items.append(result)
+            with image_col:
+                if result.thumbnail:
+                    st.image(result.thumbnail, caption=result.source or "Match", width=100)
+                elif result.source:
                     st.caption(result.source)
+            with detail_col:
+                st.markdown(f"**{result.title}**")
+                st.markdown(f"[{result.link}]({result.link})")
+                st.caption(result.source or result.displayed_link or "Detected scan result")
             with action_col:
                 if st.button("Dismiss", key=f"dismiss_match_{index}", use_container_width=True):
                     dismissed.add(result.link)
                     st.rerun()
-                if st.button("Draft Takedown Notice", key=f"draft_match_{index}", use_container_width=True):
+                if st.button("Draft Notice", key=f"draft_match_{index}", use_container_width=True):
                     _queue_dmca_draft(
                         result,
                         st.session_state.get("user_profile") or {},
                     )
+                    st.session_state["dmca_notice_mode"] = "Single notice"
                     st.rerun()
+        st.markdown("#### Batch Takedown Action")
+        count_col, action_col = st.columns([2, 2])
+        with count_col:
+            st.info(f"Selected for Takedown: **{len(selected_items)}** match(es)")
+        with action_col:
+            if st.button(
+                "Proceed to Takedown",
+                type="primary",
+                disabled=not selected_items,
+                use_container_width=True,
+            ):
+                _queue_selected_dmca_matches(
+                    selected_items,
+                    st.session_state.get("user_profile") or {},
+                )
+                st.rerun()
 
 
 def _queue_dmca_draft(result, profile: dict[str, object]) -> None:
@@ -893,6 +925,63 @@ def _queue_dmca_draft(result, profile: dict[str, object]) -> None:
     st.session_state["auto_fill_original_url"] = original_url
     st.session_state["last_infringing_url"] = infringing_url
     st.session_state["last_original_url"] = original_url
+    st.session_state["dmca_notice_mode"] = "Single notice"
+    st.session_state["jump_to_dmca"] = True
+
+
+def _queue_selected_dmca_matches(results, profile: dict[str, object]) -> None:
+    """Route selected scan results into the matching single or bulk notice form."""
+    if len(results) == 1:
+        _queue_dmca_draft(results[0], profile)
+        st.session_state["dmca_notice_mode"] = "Single notice"
+        return
+    if not results:
+        return
+
+    defaults = _dmca_notice_form_defaults()
+    owner_name = str(
+        profile.get("owner_name")
+        or st.session_state.get("user_org")
+        or st.session_state.get("profile_name")
+        or defaults["dmca_claimant_name"]
+    )
+    claimant_email = str(
+        profile.get("business_email")
+        or st.session_state.get("user_email")
+        or ""
+    )
+    claimant_address = str(
+        profile.get("mailing_address")
+        or profile.get("owner_address")
+        or st.session_state.get("user_address")
+        or ""
+    )
+    original_work = str(
+        profile.get("shop_name")
+        and f"Copyrighted product imagery for {profile['shop_name']}"
+        or defaults["dmca_original_work"]
+    )
+    original_url = str(
+        st.session_state.get("primary_asset_url")
+        or profile.get("website_url")
+        or ""
+    )
+    infringing_urls = [str(result.link) for result in results if result.link]
+    if not infringing_urls:
+        return
+
+    st.session_state.pop("dmca_prefill", None)
+    st.session_state["bulk_claimant_name"] = owner_name
+    st.session_state["bulk_claimant_email"] = claimant_email
+    st.session_state["bulk_claimant_address"] = claimant_address
+    st.session_state["bulk_original_work"] = original_work
+    st.session_state["bulk_original_url"] = original_url
+    st.session_state["bulk_infringing_urls"] = "\n".join(infringing_urls)
+    st.session_state["bulk_signature"] = owner_name
+    st.session_state["last_original_url"] = original_url
+    st.session_state["auto_fill_infringing_url"] = "\n".join(infringing_urls)
+    st.session_state["auto_fill_original_url"] = original_url
+    st.session_state["dmca_notice_mode"] = "Bulk notices"
     st.session_state["jump_to_dmca"] = True
 
 
@@ -1381,7 +1470,7 @@ def _dispatch_staged_host_notice(notice: dict[str, object], user_id: str) -> boo
     body = generate_host_notice(infringing_url, original_url)
     sent = send_notice_email(
         host_email,
-        f"URGENT: Stage 2 DMCA Host Escalation - {infringing_url}",
+        generate_notice_subject(),
         body,
     )
     try:
@@ -1524,7 +1613,7 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
     )
     if st.session_state.get("auto_fill_infringing_url"):
         st.info(
-            "✨ Form prefilled from your profile and selected scan match. "
+            "✨ Form prefilled from your profile and selected scan match(es). "
             "Review all details and your signature before generating the notice."
         )
     else:
@@ -1532,7 +1621,13 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
             "Profile details and the most recent scan URLs are filled in when available. "
             "Review all information before generating a notice."
         )
-    mode = st.radio("Notice mode", ["Single notice", "Bulk notices"], horizontal=True)
+    st.session_state.setdefault("dmca_notice_mode", "Single notice")
+    mode = st.radio(
+        "Notice mode",
+        ["Single notice", "Bulk notices"],
+        horizontal=True,
+        key="dmca_notice_mode",
+    )
     if mode == "Bulk notices":
         if tier not in {"Pro", "Pro (Full Auto)", "Enterprise"} and not trial_active:
             st.info("Bulk DMCA generation is available during your full-access trial or on an eligible paid plan.")
@@ -1650,7 +1745,7 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
             owner_notice = generate_owner_notice(infringing_url.strip(), original_url.strip())
             if send_notice_email(
                 owner_email.strip(),
-                f"DMCA Copyright Infringement Notice - {infringing_url.strip()}",
+                generate_notice_subject(),
                 owner_notice,
             ):
                 try:
