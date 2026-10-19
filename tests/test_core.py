@@ -38,6 +38,11 @@ from src.alphaguard.scanner import (
 )
 from src.alphaguard.stego import SteganographyError, capacity_bytes, decode, encode, strip_metadata_lossless
 from src.alphaguard.legal_escalation import build_escalation_drafts
+from src.alphaguard.notice_email import (
+    generate_host_notice,
+    generate_owner_notice,
+    send_notice_email,
+)
 from src.alphaguard.url_utils import (
     filter_whitelisted_matches,
     is_http_url,
@@ -257,6 +262,203 @@ def test_dmca_notice_contains_claims():
     assert "2026-08-27" in notice
     assert "https://copy.test" in notice
     assert "good faith" in notice.lower()
+
+
+def test_staged_notice_templates_include_both_asset_urls():
+    owner_notice = generate_owner_notice("https://copy.example/item", "https://original.example/photo")
+    host_notice = generate_host_notice("https://copy.example/item", "https://original.example/photo")
+
+    assert "Stage 1" in owner_notice
+    assert "96 hours (4 days)" in owner_notice
+    assert "https://copy.example/item" in owner_notice
+    assert "https://original.example/photo" in owner_notice
+    assert "Stage 2" in host_notice
+    assert "4 days ago" in host_notice
+    assert "https://copy.example/item" in host_notice
+    assert "https://original.example/photo" in host_notice
+
+
+def test_send_notice_email_uses_configured_smtp(monkeypatch):
+    import streamlit as st
+    from src.alphaguard import notice_email
+
+    monkeypatch.setattr(
+        st,
+        "secrets",
+        {"SMTP_USER": "sender@example.com", "SMTP_PASS": "secret", "SMTP_HOST": "mail.example.com"},
+        raising=False,
+    )
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port):
+            sent["host"] = host
+            sent["port"] = port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def starttls(self, context):
+            sent["tls"] = context
+
+        def login(self, username, password):
+            sent["login"] = (username, password)
+
+        def send_message(self, message):
+            sent["message"] = message
+
+    monkeypatch.setattr(notice_email.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASS", raising=False)
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_PORT", raising=False)
+
+    assert send_notice_email("owner@example.com", "Subject", "Body")
+    assert sent["host"] == "mail.example.com"
+    assert sent["port"] == 587
+    assert sent["message"]["To"] == "owner@example.com"
+    assert sent["message"]["Subject"] == "Subject"
+    assert sent["message"].get_content().strip() == "Body"
+
+
+def test_send_notice_email_rejects_missing_credentials_and_bad_recipient(monkeypatch):
+    import streamlit as st
+
+    errors = []
+    monkeypatch.setattr(st, "secrets", {}, raising=False)
+    monkeypatch.setattr(st, "error", errors.append)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASS", raising=False)
+
+    assert not send_notice_email("owner@example.com", "Subject", "Body")
+    assert "SMTP_USER" in errors[-1]
+
+    monkeypatch.setattr(st, "secrets", {"SMTP_USER": "sender@example.com", "SMTP_PASS": "secret"}, raising=False)
+    assert not send_notice_email("bad@example.com\r\nBcc: victim@example.com", "Subject", "Body")
+    assert "valid recipient" in errors[-1]
+
+
+def test_send_notice_email_reports_recipient_refusal(monkeypatch):
+    import streamlit as st
+    from src.alphaguard import notice_email
+
+    monkeypatch.setattr(
+        st,
+        "secrets",
+        {"SMTP_USER": "sender@example.com", "SMTP_PASS": "secret"},
+        raising=False,
+    )
+    errors = []
+    monkeypatch.setattr(st, "error", errors.append)
+
+    class RefusingSMTP:
+        def __init__(self, host, port):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def starttls(self, context):
+            pass
+
+        def login(self, username, password):
+            pass
+
+        def send_message(self, message):
+            return {"owner@example.com": (550, b"mailbox unavailable")}
+
+    monkeypatch.setattr(notice_email.smtplib, "SMTP", RefusingSMTP)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASS", raising=False)
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_PORT", raising=False)
+
+    assert not send_notice_email("owner@example.com", "Subject", "Body")
+    assert "refused the recipient" in errors[-1]
+
+
+def test_staged_notice_elapsed_days_uses_utc_and_four_day_threshold():
+    now = datetime(2026, 10, 19, 12, tzinfo=timezone.utc)
+
+    assert app_module._staged_notice_elapsed_days(
+        (now - timedelta(days=4)).isoformat(), now
+    ) == 4
+    assert app_module._staged_notice_elapsed_days(
+        (now - timedelta(days=4) + timedelta(seconds=1)).isoformat(), now
+    ) == 3
+    assert app_module._staged_notice_elapsed_days(
+        (now - timedelta(days=4)).replace(tzinfo=None).isoformat(), now
+    ) == 4
+
+
+def test_staged_notice_database_helpers_scope_and_record_escalation(monkeypatch):
+    from src.alphaguard import db
+
+    records = []
+    filters = []
+
+    class FakeQuery:
+        def __init__(self):
+            self.record = None
+            self.mode = ""
+
+        def insert(self, record):
+            self.record = record
+            self.mode = "insert"
+            return self
+
+        def update(self, record):
+            self.record = record
+            self.mode = "update"
+            return self
+
+        def select(self, columns):
+            return self
+
+        def eq(self, column, value):
+            filters.append((column, value))
+            return self
+
+        def execute(self):
+            if self.mode == "insert":
+                records.append(self.record)
+                return SimpleNamespace(error=None, data=[{"id": "notice-1"}])
+            records.append(self.record)
+            return SimpleNamespace(error=None, data=[{"id": "notice-1"}])
+
+    class FakeClient:
+        def table(self, table_name):
+            assert table_name == "takedown_notices"
+            return FakeQuery()
+
+    monkeypatch.setattr(db, "get_client", FakeClient)
+    notice_id = db.save_staged_takedown_notice(
+        "user-1",
+        "https://copy.example/item",
+        "owner@example.com",
+        "abuse@host.example",
+        "https://original.example/photo",
+    )
+    assert notice_id == "notice-1"
+    assert records[0]["status"] == "Owner Notified"
+    assert records[0]["user_id"] == "user-1"
+    assert records[0]["host_email"] == "abuse@host.example"
+    assert records[0]["notice_sent_at"]
+
+    assert db.claim_staged_takedown_escalation("notice-1", "user-1")
+    assert records[1] == {"status": "Stage 2 Sending"}
+    assert ("status", "Owner Notified") in filters
+
+    db.update_staged_takedown_escalation("notice-1", "user-1", sent=True)
+    assert records[2]["status"] == "Host Escalated"
+    assert records[2]["host_escalated_at"]
+    assert ("status", "Stage 2 Sending") in filters
 
 
 def test_admin_override_is_case_insensitive():

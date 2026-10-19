@@ -235,6 +235,10 @@ alter table public.takedown_notices add column if not exists escalation_status t
 alter table public.takedown_notices add column if not exists days_unresolved integer default 0;
 alter table public.takedown_notices add column if not exists escalation_at timestamptz;
 alter table public.takedown_notices add column if not exists escalation_drafts jsonb not null default '{}'::jsonb;
+alter table public.takedown_notices add column if not exists original_url text;
+alter table public.takedown_notices add column if not exists owner_email text;
+alter table public.takedown_notices add column if not exists host_email text;
+alter table public.takedown_notices add column if not exists host_escalated_at timestamptz;
 
 do $$
 declare

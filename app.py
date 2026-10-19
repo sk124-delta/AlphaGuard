@@ -36,7 +36,10 @@ from src.alphaguard.db import (
     admin_update_takedown_notice,
     exchange_password_reset_code,
     mark_takedown_notice_dispatched,
+    claim_staged_takedown_escalation,
+    get_staged_takedown_notices,
     prepare_due_takedown_escalations,
+    save_staged_takedown_notice,
     save_takedown_notice,
     save_user_onboarding,
     save_persistent_auth_session,
@@ -47,6 +50,7 @@ from src.alphaguard.db import (
     trigger_password_reset,
     update_user_password,
     update_takedown_notice_status,
+    update_staged_takedown_escalation,
     save_dmca_notice_log,
     save_encoded_image_metadata,
     save_scan_results,
@@ -54,6 +58,12 @@ from src.alphaguard.db import (
 )
 from src.alphaguard.dmca import generate_notice
 from src.alphaguard.models import NoticeData
+from takedown import (
+    generate_host_notice,
+    generate_owner_notice,
+    is_valid_email,
+    send_notice_email,
+)
 from src.alphaguard.scanner import (
     ScannerError,
     image_search_provider_name,
@@ -1267,6 +1277,118 @@ def render_subscription_tiers() -> None:
     )
 
 
+def _staged_notice_elapsed_days(sent_at: str, now: datetime | None = None) -> int:
+    sent_time = datetime.fromisoformat(sent_at.replace("Z", "+00:00"))
+    if sent_time.tzinfo is None:
+        sent_time = sent_time.replace(tzinfo=timezone.utc)
+    current_time = now or _now()
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    return max(0, int((current_time - sent_time).total_seconds() // 86400))
+
+
+def _dispatch_staged_host_notice(notice: dict[str, object], user_id: str) -> bool:
+    notice_id = str(notice.get("id") or "")
+    host_email = str(notice.get("host_email") or "")
+    infringing_url = str(notice.get("target_url") or "")
+    original_url = str(notice.get("original_url") or "")
+    if not notice_id or not is_valid_email(host_email):
+        st.error("This notice has no valid host abuse email. The escalation was not sent.")
+        return False
+    if not is_http_url(infringing_url) or not is_http_url(original_url):
+        st.error("This notice has invalid asset URLs. The escalation was not sent.")
+        return False
+    try:
+        claimed = claim_staged_takedown_escalation(notice_id, user_id)
+    except DatabaseError as exc:
+        st.error(f"Could not reserve this notice for escalation: {exc}")
+        return False
+    if not claimed:
+        st.warning("This notice is no longer awaiting escalation. Refresh the tracker.")
+        return False
+
+    body = generate_host_notice(infringing_url, original_url)
+    sent = send_notice_email(
+        host_email,
+        "URGENT: Stage 2 DMCA Host Escalation",
+        body,
+    )
+    try:
+        update_staged_takedown_escalation(notice_id, user_id, sent=sent)
+    except DatabaseError as exc:
+        if sent:
+            st.error(f"The host email was sent, but its tracker status could not be saved: {exc}")
+        else:
+            st.error(f"The host email was not sent, and the tracker could not be released for retry: {exc}")
+        return False
+    if sent:
+        st.success("Host escalation notice dispatched.")
+    return sent
+
+
+def _staged_notice_tracker() -> None:
+    st.subheader("Active Notice Tracker")
+    auth_user_id = str(st.session_state.get("auth_user_id") or "")
+    if not auth_user_id:
+        st.error("Your authenticated user ID is unavailable; the notice tracker cannot be loaded.")
+        return
+    try:
+        notices = get_staged_takedown_notices(auth_user_id)
+    except DatabaseError as exc:
+        st.error(f"Could not load your staged notice tracker: {exc}")
+        return
+
+    if not notices:
+        st.info("No staged takedown notices found.")
+        return
+
+    for item in notices:
+        notice_id = str(item.get("id") or "")
+        target_url = str(item.get("target_url") or "")
+        status = str(item.get("status") or "")
+        with st.expander(f"Target: {target_url} · Status: {status}"):
+            st.write(f"**Owner email:** {item.get('owner_email') or 'Not provided'}")
+            st.write(f"**Host / CDN email:** {item.get('host_email') or 'Not provided'}")
+            if status == "Host Escalated":
+                st.success("Escalated to the host/CDN. Awaiting takedown execution.")
+                if item.get("host_escalated_at"):
+                    st.caption(f"Host email dispatched: {item['host_escalated_at']}")
+                continue
+            if status == "Stage 2 Sending":
+                st.warning("A host escalation is currently being processed. Refresh before taking further action.")
+                continue
+
+            sent_at = str(item.get("notice_sent_at") or "")
+            if not sent_at:
+                st.error("The Stage 1 dispatch timestamp is missing; escalation is disabled.")
+                continue
+            try:
+                elapsed_days = _staged_notice_elapsed_days(sent_at)
+            except ValueError:
+                st.error("The Stage 1 dispatch timestamp is invalid; escalation is disabled.")
+                continue
+            days_left = max(0, 4 - elapsed_days)
+            st.write(f"**Elapsed time:** {elapsed_days} / 4 days")
+            if elapsed_days >= 4:
+                st.warning("The four-day grace period has expired.")
+                if st.button("Authorize Host Escalation", key=f"staged_escalate_{notice_id}", type="primary"):
+                    if _dispatch_staged_host_notice(item, auth_user_id):
+                        st.rerun()
+            else:
+                st.info(f"Grace period active: {days_left} day(s) remaining.")
+                force_confirmed = st.checkbox(
+                    "I confirm the infringement is unresolved and authorize host escalation before the grace period expires.",
+                    key=f"staged_force_confirm_{notice_id}",
+                )
+                if st.button(
+                    "Force Host Escalation Now",
+                    key=f"staged_force_{notice_id}",
+                    disabled=not force_confirmed,
+                ):
+                    if _dispatch_staged_host_notice(item, auth_user_id):
+                        st.rerun()
+
+
 def dmca_tab(tier: str, trial_active: bool = False) -> None:
     st.subheader("Draft a DMCA takedown notice")
     prefill = st.session_state.pop("dmca_prefill", {})
@@ -1308,6 +1430,7 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
                     "application/pdf",
                     use_container_width=True,
                 )
+        _staged_notice_tracker()
         return
 
     with st.form("dmca_form"):
@@ -1337,6 +1460,52 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
                 use_container_width=True,
             )
             st.caption("Review the notice and confirm the legal requirements for your jurisdiction before sending it.")
+
+    st.markdown("---")
+    st.subheader("Dispatch New Takedown Notice")
+    st.caption(
+        "Stage 1 starts the four-day timer only after the owner email is sent. "
+        "Stage 2 is never sent automatically; it requires a separate confirmation."
+    )
+    with st.form("new_staged_notice_form"):
+        infringing_url = st.text_input("Infringing Page URL", key="new_staged_infringing_url")
+        owner_email = st.text_input("Website Owner / Admin Email", key="new_staged_owner_email")
+        host_email = st.text_input("Host / CDN Abuse Email", key="new_staged_host_email")
+        original_url = st.text_input("Original Protected Asset URL", key="new_staged_original_url")
+        submit_staged_notice = st.form_submit_button(
+            "Send Owner Notice & Start 4-Day Timer",
+            type="primary",
+        )
+    if submit_staged_notice:
+        if (
+            not is_http_url(infringing_url)
+            or not is_http_url(original_url)
+            or not is_valid_email(owner_email.strip())
+            or not is_valid_email(host_email.strip())
+        ):
+            st.warning("Enter valid HTTP(S) asset URLs and valid owner and host email addresses.")
+        else:
+            owner_notice = generate_owner_notice(infringing_url.strip(), original_url.strip())
+            if send_notice_email(
+                owner_email.strip(),
+                "DMCA Notice: Action Required (4-Day Grace Period)",
+                owner_notice,
+            ):
+                try:
+                    save_staged_takedown_notice(
+                        str(st.session_state["auth_user_id"]),
+                        infringing_url.strip(),
+                        owner_email.strip(),
+                        host_email.strip(),
+                        original_url.strip(),
+                    )
+                except DatabaseError as exc:
+                    st.error(f"Owner email was sent, but the tracker could not be saved: {exc}")
+                else:
+                    st.success("Stage 1 notice sent! The four-day grace period has started.")
+                    st.rerun()
+
+    _staged_notice_tracker()
 
 
 def _initialize_session_state() -> None:

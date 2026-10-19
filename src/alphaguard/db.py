@@ -728,6 +728,114 @@ def get_takedown_notices(user_id: str) -> list[dict[str, Any]]:
     )
 
 
+def get_staged_takedown_notices(user_id: str) -> list[dict[str, Any]]:
+    """Return staged-email tracker records belonging to one authenticated user."""
+    staged_statuses = {"Owner Notified", "Stage 2 Sending", "Host Escalated"}
+    return sorted(
+        (
+            row
+            for row in _select("takedown_notices", "*", user_id=user_id)
+            if row.get("status") in staged_statuses
+        ),
+        key=lambda row: str(row.get("notice_sent_at") or row.get("created_at") or ""),
+        reverse=True,
+    )
+
+
+def save_staged_takedown_notice(
+    user_id: str,
+    target_url: str,
+    owner_email: str,
+    host_email: str,
+    original_url: str,
+) -> str:
+    """Record a Stage 1 email that has already been sent successfully."""
+    record = {
+        "user_id": user_id,
+        "target_url": target_url,
+        "original_url": original_url,
+        "owner_email": owner_email,
+        "host_email": host_email,
+        "status": "Owner Notified",
+        "notice_sent_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        response = (
+            get_client()
+            .table("takedown_notices")
+            .insert(record)
+            .select("id")
+            .execute()
+        )
+    except Exception as exc:
+        raise DatabaseError("The owner was emailed, but the staged notice could not be recorded.") from exc
+    if getattr(response, "error", None):
+        raise DatabaseError(
+            f"The owner was emailed, but the staged notice could not be recorded: {response.error}"
+        )
+    data = response.data or []
+    if not data or not data[0].get("id"):
+        raise DatabaseError(
+            "The owner was emailed, but Supabase did not return the staged notice ID."
+        )
+    return str(data[0]["id"])
+
+
+def claim_staged_takedown_escalation(notice_id: str, user_id: str) -> bool:
+    """Atomically claim an owner-notified record before sending its Stage 2 email."""
+    try:
+        response = (
+            get_client()
+            .table("takedown_notices")
+            .update({"status": "Stage 2 Sending"})
+            .eq("id", notice_id)
+            .eq("user_id", user_id)
+            .eq("status", "Owner Notified")
+            .select("id")
+            .execute()
+        )
+    except Exception as exc:
+        raise DatabaseError("Could not reserve this notice for host escalation.") from exc
+    if getattr(response, "error", None):
+        raise DatabaseError(f"Could not reserve this notice for host escalation: {response.error}")
+    return bool(response.data)
+
+
+def update_staged_takedown_escalation(
+    notice_id: str,
+    user_id: str,
+    *,
+    sent: bool,
+) -> None:
+    """Finalize or release a reserved Stage 2 email, scoped to its owner."""
+    if sent:
+        record = {
+            "status": "Host Escalated",
+            "host_escalated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        record = {"status": "Owner Notified"}
+    try:
+        response = (
+            get_client()
+            .table("takedown_notices")
+            .update(record)
+            .eq("id", notice_id)
+            .eq("user_id", user_id)
+            .eq("status", "Stage 2 Sending")
+            .select("id")
+            .execute()
+        )
+    except Exception as exc:
+        raise DatabaseError("Could not update the staged host escalation.") from exc
+    if getattr(response, "error", None):
+        raise DatabaseError(
+            f"Could not update the staged host escalation: {response.error}"
+        )
+    if not response.data:
+        raise DatabaseError("The staged notice could not be updated because its status changed.")
+
+
 def get_admin_takedown_notices() -> list[dict[str, Any]]:
     """Return all accounts' notices for the authenticated admin review center."""
     return sorted(
