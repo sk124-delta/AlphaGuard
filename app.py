@@ -2421,11 +2421,29 @@ def _main() -> None:
                 st.warning(f"Could not load your trial summary: {exc}")
             else:
                 st.info(
-                    "📊 Your 14-Day AlphaGuard Trial Summary is ready! "
-                    "View total detected matches and generated DMCA notices."
+                    "📊 Your Day 13 AlphaGuard account snapshot is ready. "
+                    "Download the current saved totals below."
                 )
                 st.caption(
-                    f"Trial totals: {matches} detected matches · {dmca_count} generated DMCA notices."
+                    "These account totals are not restricted to activity within the trial period."
+                )
+                report_time = _now()
+                st.download_button(
+                    "Download Day 13 trial summary (PDF)",
+                    data=_pdf_bytes(
+                        "AlphaGuard Day 13 Trial Account Snapshot",
+                        [
+                            "ALPHAGUARD DAY 13 TRIAL ACCOUNT SNAPSHOT",
+                            f"Generated (UTC): {report_time.isoformat()}",
+                            f"Account: {email}",
+                            "Reporting period: Current saved account totals; not trial-date filtered.",
+                            f"Detected matches: {matches}",
+                            f"Generated DMCA notices: {dmca_count}",
+                        ],
+                    ),
+                    file_name=f"AlphaGuard-Day-13-Trial-Summary-{report_time:%Y-%m-%d}.pdf",
+                    mime="application/pdf",
+                    key="download_day_13_trial_summary",
                 )
                 st.markdown(
                     f"[Contact technical support](mailto:{SUPPORT_EMAIL})"

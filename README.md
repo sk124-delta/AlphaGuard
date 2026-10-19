@@ -49,7 +49,9 @@ To run the background ValueSERP monitor, set `SERPAPI_KEY` and start the schedul
 py -m src.alphaguard.cron_scanner
 ```
 
-The service scans active assets with a configured public image URL every 24 hours (Enterprise assets are prioritized), excludes whitelisted partner domains, queues new non-whitelisted detections for admin review, prepares due seven-day escalation drafts, writes new rows to `detected_matches`, and updates `user_match_counts`.
+The service scans active assets with a configured public image URL every 24 hours for Standard and trial/free-tier accounts, every six hours for Pro tiers, and every hour for Enterprise. Inactive Free accounts remain ineligible. Scans exclude whitelisted partner domains and queue new non-whitelisted detections for human review; no plan automatically sends a takedown notice. A separate daily job prepares due seven-day escalation drafts. New detections are written to `detected_matches`, and `user_match_counts` is updated.
+
+On trial Day 13, the app offers an on-demand PDF account snapshot. It reports current saved totals rather than filtering activity to the trial dates. Monthly PDF generation is not scheduled because the app does not currently store a subscription renewal day or keep a report archive.
 
 Run the core checks with:
 

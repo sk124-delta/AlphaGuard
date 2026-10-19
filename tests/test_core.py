@@ -19,6 +19,7 @@ from app import (
     _trial_state,
 )
 from src.alphaguard.dmca import generate_notice
+from src.alphaguard import cron_scanner
 from src.alphaguard.db import (
     _scan_record,
     delete_persistent_auth_session,
@@ -1053,6 +1054,45 @@ def test_admin_plan_preview_specs_are_display_only_and_use_finite_labels():
     assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["takedown_limit_count"] is None
     assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["scan_interval_hours"] == 1
     assert app_module.ADMIN_PLAN_PREVIEWS["Enterprise"]["fallback_days"] == 4
+
+
+def test_scheduled_scan_cycle_only_scans_requested_persisted_tier(monkeypatch):
+    assets = [
+        {"id": 1, "user_id": "user-pro", "image_url": "https://pro.example/image.png"},
+        {
+            "id": 2,
+            "user_id": "user-standard",
+            "image_url": "https://standard.example/image.png",
+        },
+    ]
+    tiers = {"user-pro": "Pro", "user-standard": "Standard"}
+    scanned_urls = []
+
+    monkeypatch.setattr(cron_scanner, "get_active_protected_assets", lambda: assets)
+    monkeypatch.setattr(cron_scanner, "get_user_tier", lambda user_id: tiers[user_id])
+    monkeypatch.setattr(cron_scanner, "get_user_profile", lambda user_id: {})
+    monkeypatch.setattr(
+        cron_scanner,
+        "scan_image_valueserp",
+        lambda image_url: scanned_urls.append(image_url) or [],
+    )
+    monkeypatch.setattr(
+        cron_scanner, "filter_whitelisted_matches", lambda results, partners: results
+    )
+    monkeypatch.setattr(cron_scanner, "get_detected_match_links", lambda asset_id, links: set())
+
+    assert cron_scanner.run_scan_cycle({"Pro"}) == 0
+    assert scanned_urls == ["https://pro.example/image.png"]
+
+
+def test_tiered_scan_scheduler_uses_plan_intervals():
+    scheduler = cron_scanner.create_scheduler()
+    jobs = {job.id: job for job in scheduler.get_jobs()}
+
+    assert jobs["alphaguard-daily-value-serp-scan"].trigger.interval.total_seconds() == 24 * 3600
+    assert jobs["alphaguard-pro-value-serp-scan"].trigger.interval.total_seconds() == 6 * 3600
+    assert jobs["alphaguard-enterprise-value-serp-scan"].trigger.interval.total_seconds() == 3600
+    assert "alphaguard-takedown-escalation-check" in jobs
 
 
 def test_whitelisted_domains_match_subdomains_only():

@@ -24,10 +24,26 @@ from .url_utils import filter_whitelisted_matches
 
 LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL_HOURS = 24
+PRO_SCAN_INTERVAL_HOURS = 6
+ENTERPRISE_SCAN_INTERVAL_HOURS = 1
+DAILY_SCAN_TIERS = {"Free", "Trial", "Standard"}
+PRO_SCAN_TIERS = {"Pro", "Pro (Full Auto)"}
+ENTERPRISE_SCAN_TIERS = {"Enterprise"}
 
 
-def run_scan_cycle() -> int:
-    """Scan every active asset once and return the number of new matches saved."""
+def _prepare_due_escalations() -> int:
+    try:
+        escalated_count = prepare_due_takedown_escalations()
+        if escalated_count:
+            LOGGER.info("Prepared drafts for %s overdue takedown notice(s)", escalated_count)
+        return escalated_count
+    except DatabaseError:
+        LOGGER.exception("Could not prepare overdue takedown escalation drafts")
+        return 0
+
+
+def run_scan_cycle(tiers: set[str] | None = None) -> int:
+    """Scan active assets once, optionally limiting work to persisted plan tiers."""
     new_matches_by_user: dict[str, int] = {}
 
     assets = get_active_protected_assets()
@@ -40,12 +56,8 @@ def run_scan_cycle() -> int:
             return False
 
     assets.sort(key=has_priority, reverse=True)
-    try:
-        escalated_count = prepare_due_takedown_escalations()
-        if escalated_count:
-            LOGGER.info("Prepared drafts for %s overdue takedown notice(s)", escalated_count)
-    except DatabaseError:
-        LOGGER.exception("Could not prepare overdue takedown escalation drafts")
+    if tiers is None:
+        _prepare_due_escalations()
 
     for asset in assets:
         asset_id = int(asset["id"])
@@ -56,6 +68,8 @@ def run_scan_cycle() -> int:
 
         try:
             tier = get_user_tier(user_id)
+            if tiers is not None and tier not in tiers:
+                continue
             profile = get_user_profile(user_id)
             trial_end = (profile or {}).get("trial_end_date")
             trial_active = False
@@ -102,13 +116,43 @@ def run_scan_cycle() -> int:
 
 
 def create_scheduler() -> BlockingScheduler:
-    """Create the 24-hour scheduler without starting it."""
+    """Create tier-specific scan schedules and a daily escalation-draft check."""
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_job(
         run_scan_cycle,
         trigger="interval",
         hours=SCAN_INTERVAL_HOURS,
-        id="alphaguard-value-serp-scan",
+        args=[DAILY_SCAN_TIERS],
+        id="alphaguard-daily-value-serp-scan",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scan_cycle,
+        trigger="interval",
+        hours=PRO_SCAN_INTERVAL_HOURS,
+        args=[PRO_SCAN_TIERS],
+        id="alphaguard-pro-value-serp-scan",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scan_cycle,
+        trigger="interval",
+        hours=ENTERPRISE_SCAN_INTERVAL_HOURS,
+        args=[ENTERPRISE_SCAN_TIERS],
+        id="alphaguard-enterprise-value-serp-scan",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _prepare_due_escalations,
+        trigger="interval",
+        hours=SCAN_INTERVAL_HOURS,
+        id="alphaguard-takedown-escalation-check",
         max_instances=1,
         coalesce=True,
         replace_existing=True,
@@ -117,7 +161,7 @@ def create_scheduler() -> BlockingScheduler:
 
 
 def main() -> None:
-    """Run an initial scan, then continue scanning every 24 hours."""
+    """Run an initial scan, then continue on each tier's configured interval."""
     logging.basicConfig(level=logging.INFO)
     run_scan_cycle()
     scheduler = create_scheduler()
