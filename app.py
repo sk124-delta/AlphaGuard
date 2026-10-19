@@ -1729,6 +1729,23 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         "new_staged_host_email",
         st.session_state.get("detected_host_email", ""),
     )
+    profile = st.session_state.get("user_profile") or {}
+    st.session_state.setdefault(
+        "new_staged_claimant_name",
+        str(profile.get("owner_name") or profile.get("shop_name") or ""),
+    )
+    st.session_state.setdefault(
+        "new_staged_claimant_email",
+        str(profile.get("business_email") or st.session_state.get("user_email") or ""),
+    )
+    st.session_state.setdefault(
+        "new_staged_claimant_address",
+        str(profile.get("mailing_address") or profile.get("owner_address") or ""),
+    )
+    st.session_state.setdefault(
+        "new_staged_signature",
+        str(profile.get("owner_name") or ""),
+    )
     if st.session_state.get("auto_fill_infringing_url"):
         st.info(
             "✨ Form prefilled from your profile and selected scan match(es). "
@@ -1845,6 +1862,18 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         "Stage 2 always requires separate confirmation."
     )
     with st.form("new_staged_notice_form"):
+        claimant_name = st.text_input(
+            "Your name or organization",
+            key="new_staged_claimant_name",
+        )
+        claimant_email = st.text_input(
+            "Your contact email",
+            key="new_staged_claimant_email",
+        )
+        claimant_address = st.text_area(
+            "Your mailing address",
+            key="new_staged_claimant_address",
+        )
         infringing_url = st.text_input("Infringing Page URL", key="new_staged_infringing_url")
         owner_email = st.text_input(
             "Website Owner / Admin Email",
@@ -1859,6 +1888,10 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         if st.session_state.get("detected_host_provider"):
             st.caption(f"Detected hosting network: {st.session_state['detected_host_provider']}")
         original_url = st.text_input("Original Protected Asset URL", key="new_staged_original_url")
+        signature = st.text_input(
+            "Legal signature",
+            key="new_staged_signature",
+        )
         submit_staged_notice = st.form_submit_button(
             "Send Owner Notice & Start 4-Day Timer",
             type="primary",
@@ -1867,12 +1900,26 @@ def dmca_tab(tier: str, trial_active: bool = False) -> None:
         if (
             not is_http_url(infringing_url)
             or not is_http_url(original_url)
+            or not claimant_name.strip()
+            or not is_valid_email(claimant_email.strip())
+            or not claimant_address.strip()
+            or not signature.strip()
             or not is_valid_email(owner_email.strip())
             or not is_valid_email(host_email.strip())
         ):
-            st.warning("Enter valid HTTP(S) asset URLs and valid owner and host email addresses.")
+            st.warning(
+                "Complete the claimant name, valid contact email, mailing address, "
+                "signature, valid HTTP(S) asset URLs, and valid owner and host email addresses."
+            )
         else:
-            owner_notice = generate_owner_notice(infringing_url.strip(), original_url.strip())
+            owner_notice = generate_owner_notice(
+                infringing_url.strip(),
+                original_url.strip(),
+                claimant_name=claimant_name.strip(),
+                claimant_email=claimant_email.strip(),
+                claimant_address=claimant_address.strip(),
+                signature=signature.strip(),
+            )
             if send_notice_email(
                 owner_email.strip(),
                 generate_notice_subject(),

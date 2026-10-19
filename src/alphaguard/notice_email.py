@@ -65,8 +65,23 @@ def send_notice_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
-def generate_owner_notice(infringing_url: str, original_url: str) -> str:
+def generate_owner_notice(
+    infringing_url: str,
+    original_url: str,
+    claimant_name: str = "",
+    claimant_email: str = "",
+    claimant_address: str = "",
+    signature: str = "",
+) -> str:
     """Render a Stage 1 notice for a website owner."""
+    claimant_details = ""
+    if any((claimant_name, claimant_email, claimant_address)):
+        claimant_details = f"""
+Claimant: {claimant_name}
+Contact email: {claimant_email}
+Mailing address: {claimant_address}
+"""
+    signatory = signature or claimant_name or "AlphaGuard Automated Enforcement Team"
     return f"""NOTICE OF COPYRIGHT INFRINGEMENT (DMCA Stage 1)
 
 To Website Administrator / Owner,
@@ -74,12 +89,12 @@ To Website Administrator / Owner,
 Infringing Material URL: {infringing_url}
 Authorized Original Asset: {original_url}
 
-It has come to our attention that copyrighted visual assets belonging to our client are hosted/displayed on your website without valid authorization.
+{claimant_details}The claimant believes that copyrighted visual assets are hosted or displayed on your website without authorization.
 
 Please remove or disable access to the specified material within 96 hours (4 days) from the date of this notice. Failure to respond will result in immediate escalation to your upstream web hosting provider / CDN abuse team.
 
 Regards,
-AlphaGuard Automated Enforcement Team
+{signatory}
 """
 
 

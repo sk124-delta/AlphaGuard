@@ -779,6 +779,23 @@ def test_staged_notice_templates_include_both_asset_urls():
     assert "https://original.example/photo" in host_notice
 
 
+def test_owner_notice_includes_claimant_identity_and_signature():
+    notice = generate_owner_notice(
+        "https://copy.example/item",
+        "https://original.example/photo",
+        claimant_name="Store Owner",
+        claimant_email="owner@example.com",
+        claimant_address="1 Main Street",
+        signature="Store Owner",
+    )
+
+    assert "Claimant: Store Owner" in notice
+    assert "Contact email: owner@example.com" in notice
+    assert "Mailing address: 1 Main Street" in notice
+    assert notice.rstrip().endswith("Store Owner")
+    assert "belonging to our client" not in notice
+
+
 def test_generate_notice_subject_includes_timestamp(monkeypatch):
     import takedown
 
